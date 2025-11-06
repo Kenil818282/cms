@@ -8,7 +8,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 min-h-screen">
-
+    
     <!-- Admin Navigation Bar -->
     <nav class="bg-white shadow-md">
         <div class="container mx-auto px-4 max-w-7xl">
@@ -21,13 +21,13 @@
                 <div class="hidden md:flex md:space-x-8">
                     <a href="/admin" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Dashboard</a>
                     <a href="/admin/manage" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Manage Stones</a>
-
+                    
                     <% if (user.is_superadmin) { %>
                         <a href="/admin/users" class="text-blue-600 border-b-2 border-blue-600 font-medium px-1 py-4">Manage Users</a>
                     <% } %>
-
+                    
                     <a href="/admin/history" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">History</a>
-
+                    
                     <% if (user.is_superadmin || user.can_view_analytics) { %>
                         <a href="/admin/analytics" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Analytics</a>
                     <% } %>
@@ -40,11 +40,11 @@
             </div>
         </div>
     </nav>
-
+    
     <!-- Page Header -->
     <header class="bg-white shadow-sm">
         <div class="container mx-auto px-4 py-4 max-w-7xl">
-            <h2 class="text-2xl font-bold text-gray-900">Edit User Permissions</h2>
+            <h2 class="text-2xl font-bold text-gray-900">Edit User</h2>
         </div>
     </header>
 
@@ -61,10 +61,16 @@
             <!-- Edit User Form -->
             <div class="bg-white p-8 rounded-lg shadow-lg">
                 <h3 class="text-2xl font-bold mb-6">Editing: <%= userToEdit.username %></h3>
-
+                
                 <form action="/admin/update-user" method="POST">
                     <!-- Hidden field to send the user's ID -->
                     <input type="hidden" name="id" value="<%= userToEdit.id %>">
+                    
+                    <!-- NEW: Change Password Field -->
+                    <div class="mb-6">
+                        <label for="new_password" class="block text-sm font-medium text-gray-700 mb-2">Change Password (Optional)</label>
+                        <input type="password" name="new_password" id="new_password" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" minlength="8" placeholder="Leave blank to keep current password">
+                    </div>
 
                     <!-- Permissions Checkboxes -->
                     <div class="mt-6">
@@ -72,10 +78,14 @@
                         <p class="text-sm text-gray-500 mb-4">Note: A "Super Admin" automatically gets all permissions.</p>
                         <div class="space-y-4">
                             <div class="flex items-center">
+                                <!-- 
+                                  'checked' logic: Check the box if the user has this permission OR if they are a superadmin.
+                                  'disabled' logic: Disable the box if they are a superadmin (since they have all permissions).
+                                -->
                                 <input id="can_add" name="can_add" type="checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                                     <%= (userToEdit.can_add || userToEdit.is_superadmin) ? 'checked' : '' %>
                                     <%= userToEdit.is_superadmin ? 'disabled' : '' %>>
-                                <label for="can_add" class="ml-3 block text-sm font-medium text-gray-700">Can Add Stones</label>
+                                <label for="can_add" class="ml-3 block text-sm font-medium text-gray-700">Can Add/Edit Stones</label>
                             </div>
                             <div class="flex items-center">
                                 <input id="can_delete" name="can_delete" type="checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
@@ -96,10 +106,10 @@
                             </div>
                         </div>
                     </div>
-
+                    
                     <div class="mt-8 flex items-center space-x-4">
                         <button type="submit" class="py-3 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-lg transition duration-200">
-                            Update Permissions
+                            Update User
                         </button>
                         <a href="/admin/users" class="py-3 px-6 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold rounded-lg text-lg transition duration-200">
                             Cancel
