@@ -334,7 +334,7 @@ app.post('/login', (req, res) => {
         if (match) {
             req.session.user = { id: user.id, username: user.username };
             logAction(req.session.user, 'LOGIN', 'User logged in.');
-            res.redirect('/admin?login=true'); // Redirect with login=true flag
+            res.redirect('/admin?login=true'); // <-- Redirect with login=true flag
         } else {
             return res.render('login', { message: { type: 'error', text: 'Invalid username or password.' } });
         }
@@ -372,6 +372,15 @@ app.get('/admin/manage', isAuthenticated, (req, res) => {
     const baseUrl = req.protocol + '://' + req.get('host');
     const searchQuery = req.query.search || '';
     
+    // Check for success/error messages from delete all
+    let message = null;
+    if (req.query.success === 'delete_all_success') {
+        message = { type: 'success', text: 'All stones have been successfully deleted.' };
+    }
+    if (req.query.error === 'delete_all_failed') {
+        message = { type: 'error', text: 'An error occurred while deleting stones.' };
+    }
+
     let sql = "SELECT * FROM stones";
     let params = [];
     if (searchQuery) {
@@ -388,7 +397,7 @@ app.get('/admin/manage', isAuthenticated, (req, res) => {
         if (err) return res.status(500).send("Server error");
         res.render('admin/manage', { 
             stones: stones, 
-            message: null,
+            message: message, // Pass the message
             baseUrl: baseUrl,
             searchQuery: searchQuery
         });
@@ -472,7 +481,7 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFi
     }
 });
 
-// POST /admin/edit-stone/:id (Protected by canAdd)
+// GET /admin/edit-stone/:id (Protected by canAdd)
 app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, (req, res) => {
     const stoneIdToEdit = req.params.id;
     db.get("SELECT * FROM stones WHERE id = ?", [stoneIdToEdit], (err, stone) => {
@@ -539,10 +548,10 @@ app.post('/admin/delete-all-stones', isAuthenticated, isSuperAdmin, (req, res) =
         if (err) {
             console.error(err);
             logAction(req.user, 'DELETE_ALL_STONES_FAIL', `Error: ${err.message}`);
-            return res.redirect('/admin/manage'); // Add error message later if needed
+            return res.redirect('/admin/manage?error=delete_all_failed');
         }
         logAction(req.user, 'DELETE_ALL_STONES', 'User successfully deleted all stones.');
-        res.redirect('/admin/manage');
+        res.redirect('/admin/manage?success=delete_all_success');
     });
 });
 // --- END: DELETE ALL STONES ROUTE ---
