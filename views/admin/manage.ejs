@@ -50,6 +50,13 @@
 
     <main class="container mx-auto px-4 py-8 max-w-7xl">
         
+        <!-- Status Message -->
+        <% if (message) { %>
+            <div class="mb-6 p-4 rounded-md <%= message.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800' %>">
+                <%= message.text %>
+            </div>
+        <% } %>
+
         <!-- Search Bar -->
         <div class="bg-white p-6 rounded-lg shadow-lg mb-8">
             <form action="/admin/manage" method="GET">
@@ -146,6 +153,23 @@
                 </tbody>
             </table>
         </div>
+
+        <!-- NEW: Danger Zone (Super Admin Only) -->
+        <% if (user.is_superadmin) { %>
+        <div class="bg-red-50 border-l-4 border-red-500 p-6 rounded-lg shadow-lg mt-8">
+            <h3 class="text-2xl font-bold text-red-900">Danger Zone</h3>
+            <p class="text-red-700 mt-2 mb-4">
+                This is a high-risk action. Deleting all stones cannot be undone and will permanently remove all data from the `stones` table.
+            </p>
+            <button type="button"
+                    onclick="openDeleteAllModal()"
+                    class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-5 rounded-lg">
+                Delete All Stones...
+            </button>
+        </div>
+        <% } %>
+        <!-- END: Danger Zone -->
+
     </main>
 
     <!-- 
@@ -184,12 +208,60 @@
                     <form id="deleteForm" action="/admin/delete-stone" method="POST" class="inline">
                         <input type="hidden" id="deleteStoneId" name="id" value="">
                         <input type="hidden" id="deleteStockId" name="stock_id" value="">
-                        <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
+                        <button type="submit" classm="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
                             Yes, Delete
                         </button>
                     </form>
                     <button type="button"
                             onclick="closeDeleteModal()"
+                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 
+      NEW: Delete ALL Stones Confirmation Modal
+    -->
+    <div id="deleteAllModal" class="fixed z-50 inset-0 overflow-y-auto hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <!-- Background overlay -->
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeDeleteAllModal()"></div>
+
+            <!-- Modal panel -->
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                    <div class="sm:flex sm:items-start">
+                        <!-- Warning Icon -->
+                        <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
+                            <svg class="h-6 w-6 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                        </div>
+                        <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
+                            <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
+                                Delete All Stones
+                            </h3>
+                            <div class="mt-2">
+                                <p class="text-sm text-gray-500">
+                                    Are you absolutely sure? This will permanently delete <strong>all <%= stones.length %> stones</strong> from the database. This action cannot be undone.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <!-- The actual delete form -->
+                    <form action="/admin/delete-all-stones" method="POST" class="inline">
+                        <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
+                            Yes, I am sure
+                        </button>
+                    </form>
+                    <button type="button"
+                            onclick="closeDeleteAllModal()"
                             class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
                         Cancel
                     </button>
@@ -217,13 +289,23 @@
             deleteModal.classList.add('hidden');
         }
 
+        // --- NEW: Delete All Modal Logic ---
+        const deleteAllModal = document.getElementById('deleteAllModal');
+
+        function openDeleteAllModal() {
+            deleteAllModal.classList.remove('hidden');
+        }
+
+        function closeDeleteAllModal() {
+            deleteAllModal.classList.add('hidden');
+        }
+
         // --- Copy Link Logic ---
         async function copyLink(urlToCopy, event) {
             const buttonElement = event.target;
             try {
                 await navigator.clipboard.writeText(urlToCopy);
                 
-                // Give feedback on the button that was clicked
                 const originalText = buttonElement.innerHTML;
                 buttonElement.innerHTML = 'Copied!';
                 buttonElement.disabled = true;
@@ -231,7 +313,7 @@
                 setTimeout(() => {
                     buttonElement.innerHTML = originalText;
                     buttonElement.disabled = false;
-                }, 2000); // Revert text after 2 seconds
+                }, 2000);
             } catch (err) {
                 console.error('Failed to copy: ', err);
                 buttonElement.innerHTML = 'Error!';
