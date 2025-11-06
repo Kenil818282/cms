@@ -77,7 +77,7 @@ function isAuthenticated(req, res, next) {
     if (!req.session.user) {
         return res.redirect('/login');
     }
-
+    
     // Fetch *current* permissions from DB on every secure request
     db.get("SELECT * FROM users WHERE id = ?", [req.session.user.id], (err, user) => {
         if (err || !user) {
@@ -101,12 +101,12 @@ function isSuperAdmin(req, res, next) {
     }
 }
 
-// Can the user add/upload?
+// Can the user add/upload? (NOW ALSO USED FOR EDITING)
 function canAdd(req, res, next) {
     if (req.user.is_superadmin || req.user.can_add) {
         next();
     } else {
-        res.status(403).send("Forbidden: You do not have permission to add data.");
+        res.status(403).send("Forbidden: You do not have permission to add or edit data.");
     }
 }
 
@@ -182,23 +182,18 @@ function parseReferrer(referrer) {
     if (!referrer || referrer === 'Direct') {
         return { source: 'Direct', domain: null };
     }
-
     try {
         const url = new URL(referrer);
-        const domain = url.hostname.replace('www.', ''); // 'facebook.com'
-
+        const domain = url.hostname.replace('www.', '');
         if (domain.includes('google.com')) return { source: 'Google', domain: 'google.com' };
         if (domain.includes('facebook.com')) return { source: 'Facebook', domain: 'facebook.com' };
         if (domain.includes('t.co')) return { source: 'X / Twitter', domain: 't.co' };
         if (domain.includes('instagram.com')) return { source: 'Instagram', domain: 'instagram.com' };
         if (domain.includes('linkedin.com')) return { source: 'LinkedIn', domain: 'linkedin.com' };
         if (domain.includes('wa.me') || domain.includes('whatsapp.com')) return { source: 'WhatsApp', domain: domain };
-
-        // Default: just log the domain
         return { source: 'Other', domain: domain };
-
     } catch (error) {
-        return { source: 'Other', domain: referrer }; // Handle invalid URLs
+        return { source: 'Other', domain: referrer };
     }
 }
 
@@ -216,7 +211,6 @@ async function logClickAnalytics(clickId, ipAddress) {
             isp: 'Test ISP'
         };
     } else {
-        // This is a real visitor, get real data
         try {
             const response = await fetch(`http://ip-api.com/json/${ipAddress}?fields=status,country,countryCode,city,isp`);
             const data = await response.json();
@@ -240,7 +234,7 @@ async function logClickAnalytics(clickId, ipAddress) {
         const sql = `UPDATE link_clicks 
                      SET country = ?, country_code = ?, city = ?, isp = ?
                      WHERE id = ?`;
-
+        
         db.run(sql, [
             locationData.country,
             locationData.country_code,
@@ -262,7 +256,7 @@ async function logClickAnalytics(clickId, ipAddress) {
 // GET /diamonds/:stockId - Public page (NOW WITH POWERFUL TRACKING)
 app.get('/diamonds/:stockId', (req, res) => {
     const stock_id = req.params.stockId;
-
+    
     db.get("SELECT * FROM stones WHERE stock_id = ?", [stock_id], (err, row) => {
         if (err) {
             console.error(err);
@@ -271,21 +265,19 @@ app.get('/diamonds/:stockId', (req, res) => {
         if (!row) {
             return res.status(404).render('404', { stock_id: stock_id });
         }
-
+        
         const ipAddress = req.ip; 
         const referrerString = req.get('Referrer') || 'Direct';
         const uaString = req.get('User-Agent');
-
-        const referrerInfo = parseReferrer(referrerString); // Auto-detect source
+        const referrerInfo = parseReferrer(referrerString);
         const parser = new UAParser(uaString);
         const device = parser.getResult();
-
         const utmParams = {
             source: req.query.utm_source || null,
             medium: req.query.utm_medium || null,
             campaign: req.query.utm_campaign || null
         };
-
+        
         const sql = `INSERT INTO link_clicks (
                         stock_id, ip_address, 
                         social_source, referrer_domain, 
@@ -293,7 +285,7 @@ app.get('/diamonds/:stockId', (req, res) => {
                         utm_source, utm_medium, utm_campaign
                      ) 
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-
+        
         db.run(sql, [
             stock_id, ipAddress,
             referrerInfo.source, referrerInfo.domain,
@@ -342,8 +334,7 @@ app.post('/login', (req, res) => {
         if (match) {
             req.session.user = { id: user.id, username: user.username };
             logAction(req.session.user, 'LOGIN', 'User logged in.');
-            // --- UPDATED: Redirect with login=true flag ---
-            res.redirect('/admin?login=true');
+            res.redirect('/admin?login=true'); // <-- Redirect with login=true flag
         } else {
             return res.render('login', { message: { type: 'error', text: 'Invalid username or password.' } });
         }
@@ -369,7 +360,6 @@ app.get('/logout', (req, res) => {
 
 // GET /admin - Dashboard
 app.get('/admin', isAuthenticated, (req, res) => {
-    // --- UPDATED: Check for the login flag ---
     const showDisclaimer = req.query.login === 'true';
     res.render('admin/dashboard', { 
         message: null, 
@@ -381,7 +371,7 @@ app.get('/admin', isAuthenticated, (req, res) => {
 app.get('/admin/manage', isAuthenticated, (req, res) => {
     const baseUrl = req.protocol + '://' + req.get('host');
     const searchQuery = req.query.search || '';
-
+    
     let sql = "SELECT * FROM stones";
     let params = [];
     if (searchQuery) {
@@ -416,7 +406,7 @@ app.get('/admin/qr/:stockId', isAuthenticated, (req, res) => {
 
         QRCode.toDataURL(publicUrl, { width: 300, margin: 2 }, (err, qrCodeDataUrl) => {
             if (err) return res.status(500).send("Error generating QR code");
-
+            
             res.render('admin/qr_code', {
                 stock_id: stock_id,
                 publicUrl: publicUrl,
@@ -431,28 +421,16 @@ app.get('/admin/qr/:stockId', isAuthenticated, (req, res) => {
 app.post('/admin/add-single', isAuthenticated, canAdd, (req, res) => {
     const { stock_id, video_url, certificate_url } = req.body;
     if (!stock_id) {
-        return res.render('admin/dashboard', { 
-            message: { type: 'error', text: 'Stock ID is required.' }, 
-            showDisclaimer: false // Not a fresh login
-        });
+        return res.render('admin/dashboard', { message: { type: 'error', text: 'Stock ID is required.' }, showDisclaimer: false });
     }
     const sql = "INSERT OR IGNORE INTO stones (stock_id, video_url, certificate_url) VALUES (?, ?, ?)";
     db.run(sql, [stock_id, video_url, certificate_url], function(err) {
-        if (err) return res.render('admin/dashboard', { 
-            message: { type: 'error', text: 'Database error.' },
-            showDisclaimer: false 
-        });
+        if (err) return res.render('admin/dashboard', { message: { type: 'error', text: 'Database error.' }, showDisclaimer: false });
         if (this.changes === 0) {
-            return res.render('admin/dashboard', { 
-                message: { type: 'error', text: `Stock ID '${stock_id}' already exists.` },
-                showDisclaimer: false
-            });
+            return res.render('admin/dashboard', { message: { type: 'error', text: `Stock ID '${stock_id}' already exists.` }, showDisclaimer: false });
         }
         logAction(req.user, 'ADD_SINGLE', `Added stone: ${stock_id}`);
-        res.render('admin/dashboard', { 
-            message: { type: 'success', text: `Stone '${stock_id}' added successfully!` },
-            showDisclaimer: false
-        });
+        res.render('admin/dashboard', { message: { type: 'success', text: `Stone '${stock_id}' added successfully!` }, showDisclaimer: false });
     });
 });
 
@@ -460,10 +438,7 @@ app.post('/admin/add-single', isAuthenticated, canAdd, (req, res) => {
 const upload = multer({ storage: multer.memoryStorage() });
 app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFile'), (req, res) => {
     if (!req.file) {
-        return res.render('admin/dashboard', { 
-            message: { type: 'error', text: 'No file uploaded.' },
-            showDisclaimer: false
-        });
+        return res.render('admin/dashboard', { message: { type: 'error', text: 'No file uploaded.' }, showDisclaimer: false });
     }
     try {
         const workbook = xlsx.read(req.file.buffer, { type: "buffer" });
@@ -485,26 +460,73 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFi
                 }
             }
             stmt.finalize((err) => {
-                if (err) return res.render('admin/dashboard', { 
-                    message: { type: 'error', text: 'Error processing file.' },
-                    showDisclaimer: false
-                });
+                if (err) return res.render('admin/dashboard', { message: { type: 'error', text: 'Error processing file.' }, showDisclaimer: false });
                 const details = `Bulk upload: Added ${stonesAdded}, Ignored ${stonesIgnored}.`;
                 logAction(req.user, 'ADD_BULK', details);
-                res.render('admin/dashboard', { 
-                    message: { type: 'success', text: `Bulk upload complete! Added: ${stonesAdded}, Ignored (duplicates): ${stonesIgnored}` },
-                    showDisclaimer: false
-                });
+                res.render('admin/dashboard', { message: { type: 'success', text: `Bulk upload complete! Added: ${stonesAdded}, Ignored (duplicates): ${stonesIgnored}` }, showDisclaimer: false });
             });
         });
     } catch (error) {
         console.error(error);
-        res.render('admin/dashboard', { 
-            message: { type: 'error', text: 'Invalid file format. Please use .xlsx or .csv' },
-            showDisclaimer: false 
-        });
+        res.render('admin/dashboard', { message: { type: 'error', text: 'Invalid file format. Please use .xlsx or .csv' }, showDisclaimer: false });
     }
 });
+
+// --- NEW: EDIT STONE ROUTES (Protected by canAdd) ---
+// GET /admin/edit-stone/:id
+app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, (req, res) => {
+    const stoneIdToEdit = req.params.id;
+    db.get("SELECT * FROM stones WHERE id = ?", [stoneIdToEdit], (err, stone) => {
+        if (err || !stone) {
+            return res.redirect('/admin/manage');
+        }
+        res.render('admin/edit_stone', { stone: stone, message: null });
+    });
+});
+
+// POST /admin/update-stone
+app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
+    const { id, stock_id, video_url, certificate_url } = req.body;
+
+    if (!stock_id) {
+        // Need to refetch stone data to render edit page again
+        db.get("SELECT * FROM stones WHERE id = ?", [id], (err, stone) => {
+            res.render('admin/edit_stone', { 
+                stone: stone, 
+                message: { type: 'error', text: 'Stock ID cannot be empty.' }
+            });
+        });
+        return;
+    }
+
+    const sql = `UPDATE stones SET 
+                    stock_id = ?,
+                    video_url = ?,
+                    certificate_url = ?
+                 WHERE id = ?`;
+    
+    db.run(sql, [stock_id, video_url, certificate_url, id], function(err) {
+        if (err) {
+            // Check for UNIQUE constraint error
+            if (err.code === 'SQLITE_CONSTRAINT') {
+                db.get("SELECT * FROM stones WHERE id = ?", [id], (err_fetch, stone) => {
+                    res.render('admin/edit_stone', { 
+                        stone: stone, 
+                        message: { type: 'error', text: `Error: Stock ID '${stock_id}' already exists.` }
+                    });
+                });
+                return;
+            }
+            // Other error
+            console.error(err);
+            return res.redirect('/admin/manage');
+        }
+        
+        logAction(req.user, 'EDIT_STONE', `Updated stone: ${stock_id} (ID: ${id})`);
+        res.redirect('/admin/manage');
+    });
+});
+// --- END: EDIT STONE ROUTES ---
 
 // POST /admin/delete-stone (Protected by canDelete)
 app.post('/admin/delete-stone', isAuthenticated, canDelete, (req, res) => {
@@ -533,21 +555,31 @@ app.post('/admin/add-user', isAuthenticated, isSuperAdmin, async (req, res) => {
     const can_add = req.body.can_add === 'on' ? 1 : 0;
     const can_delete = req.body.can_delete === 'on' ? 1 : 0;
     const can_view_analytics = req.body.can_view_analytics === 'on' ? 1 : 0;
-
+    
     if (!username || !password) {
-        return res.render('admin/users', { users: [], message: {type: 'error', text: 'Username and password are required.'} });
+        db.all("SELECT * FROM users", [], (err, users) => {
+             res.render('admin/users', { users: users, message: {type: 'error', text: 'Username and password are required.'} });
+        });
+        return;
     }
     try {
         const hash = await bcrypt.hash(password, saltRounds);
         const sql = `INSERT INTO users (username, password_hash, is_superadmin, can_add, can_delete, can_view_analytics) 
                      VALUES (?, ?, ?, ?, ?, ?)`;
         db.run(sql, [username, hash, is_superadmin, can_add, can_delete, can_view_analytics], (err) => {
-            if (err) return res.render('admin/users', { users: [], message: {type: 'error', text: 'Username already exists.'} });
+            if (err) {
+                 db.all("SELECT * FROM users", [], (err, users) => {
+                    res.render('admin/users', { users: users, message: {type: 'error', text: 'Username already exists.'} });
+                 });
+                 return;
+            }
             logAction(req.user, 'ADD_USER', `Created new user: ${username}`);
             res.redirect('/admin/users');
         });
     } catch (hashErr) {
-        return res.render('admin/users', { users: [], message: {type: 'error', text: 'Error hashing password.'} });
+        db.all("SELECT * FROM users", [], (err, users) => {
+            res.render('admin/users', { users: users, message: {type: 'error', text: 'Error hashing password.'} });
+        });
     }
 });
 
@@ -563,9 +595,10 @@ app.get('/admin/edit-user/:id', isAuthenticated, isSuperAdmin, (req, res) => {
 });
 
 // POST /admin/update-user
-app.post('/admin/update-user', isAuthenticated, isSuperAdmin, (req, res) => {
-    const { id, is_superadmin, can_add, can_delete, can_view_analytics } = req.body;
-
+app.post('/admin/update-user', isAuthenticated, isSuperAdmin, async (req, res) => {
+    const { id, new_password, is_superadmin, can_add, can_delete, can_view_analytics } = req.body;
+    
+    // Prevent superadmin from removing their own superadmin status
     if (id == req.user.id && !is_superadmin) {
         db.get("SELECT * FROM users WHERE id = ?", [id], (err, userToEdit) => {
              res.render('admin/edit_user', { 
@@ -575,19 +608,43 @@ app.post('/admin/update-user', isAuthenticated, isSuperAdmin, (req, res) => {
         });
         return;
     }
+    
+    // --- NEW: Handle Password Change ---
+    let passwordSql = "";
+    let passwordParams = [];
+    if (new_password) {
+        try {
+            const hash = await bcrypt.hash(new_password, saltRounds);
+            passwordSql = ", password_hash = ?";
+            passwordParams.push(hash);
+            logAction(req.user, 'EDIT_USER_PASSWORD', `Changed password for user ID: ${id}`);
+        } catch (hashErr) {
+            // Handle hash error
+             db.get("SELECT * FROM users WHERE id = ?", [id], (err, userToEdit) => {
+                 res.render('admin/edit_user', { 
+                    userToEdit: userToEdit,
+                    message: { type: 'error', text: 'Error hashing new password.' }
+                });
+             });
+             return;
+        }
+    }
+    // --- END: Password Change ---
 
     const sql = `UPDATE users SET
                     is_superadmin = ?,
                     can_add = ?,
                     can_delete = ?,
                     can_view_analytics = ?
+                    ${passwordSql}
                  WHERE id = ?`;
-
+                 
     const params = [
         is_superadmin === 'on' ? 1 : 0,
         can_add === 'on' ? 1 : 0,
         can_delete === 'on' ? 1 : 0,
         can_view_analytics === 'on' ? 1 : 0,
+        ...passwordParams, // Add the hashed password if it exists
         id
     ];
 
@@ -596,7 +653,7 @@ app.post('/admin/update-user', isAuthenticated, isSuperAdmin, (req, res) => {
             console.error(err);
             return res.redirect(`/admin/edit-user/${id}`);
         }
-        logAction(req.user, 'EDIT_USER', `Updated permissions for user ID: ${id}`);
+        logAction(req.user, 'EDIT_USER_PERMS', `Updated permissions for user ID: ${id}`);
         res.redirect('/admin/users');
     });
 });
@@ -613,7 +670,7 @@ app.post('/admin/delete-user', isAuthenticated, isSuperAdmin, (req, res) => {
     db.get("SELECT username FROM users WHERE id = ?", [id], (err, row) => {
         if (err) return res.redirect('/admin/users');
         const deletedUsername = row ? row.username : `ID ${id}`;
-
+        
         db.run("DELETE FROM users WHERE id = ?", [id], (err) => {
             if (err) console.error(err);
             else logAction(req.user, 'DELETE_USER', `Deleted user: ${deletedUsername}`);
@@ -667,7 +724,7 @@ app.get('/admin/analytics', isAuthenticated, canViewAnalytics, (req, res) => {
 
         sql += " ORDER BY timestamp DESC LIMIT ? OFFSET ?";
         params.push(limit, offset);
-
+        
         db.all(sql, params, (err, clicks) => {
             if (err) {
                 console.error(err);
