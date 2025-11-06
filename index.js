@@ -334,7 +334,7 @@ app.post('/login', (req, res) => {
         if (match) {
             req.session.user = { id: user.id, username: user.username };
             logAction(req.session.user, 'LOGIN', 'User logged in.');
-            res.redirect('/admin?login=true'); // <-- Redirect with login=true flag
+            res.redirect('/admin?login=true'); // Redirect with login=true flag
         } else {
             return res.render('login', { message: { type: 'error', text: 'Invalid username or password.' } });
         }
@@ -472,8 +472,7 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFi
     }
 });
 
-// --- NEW: EDIT STONE ROUTES (Protected by canAdd) ---
-// GET /admin/edit-stone/:id
+// POST /admin/edit-stone/:id (Protected by canAdd)
 app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, (req, res) => {
     const stoneIdToEdit = req.params.id;
     db.get("SELECT * FROM stones WHERE id = ?", [stoneIdToEdit], (err, stone) => {
@@ -484,12 +483,11 @@ app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, (req, res) => {
     });
 });
 
-// POST /admin/update-stone
+// POST /admin/update-stone (Protected by canAdd)
 app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
     const { id, stock_id, video_url, certificate_url } = req.body;
 
     if (!stock_id) {
-        // Need to refetch stone data to render edit page again
         db.get("SELECT * FROM stones WHERE id = ?", [id], (err, stone) => {
             res.render('admin/edit_stone', { 
                 stone: stone, 
@@ -507,7 +505,6 @@ app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
     
     db.run(sql, [stock_id, video_url, certificate_url, id], function(err) {
         if (err) {
-            // Check for UNIQUE constraint error
             if (err.code === 'SQLITE_CONSTRAINT') {
                 db.get("SELECT * FROM stones WHERE id = ?", [id], (err_fetch, stone) => {
                     res.render('admin/edit_stone', { 
@@ -517,7 +514,6 @@ app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
                 });
                 return;
             }
-            // Other error
             console.error(err);
             return res.redirect('/admin/manage');
         }
@@ -526,7 +522,6 @@ app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
         res.redirect('/admin/manage');
     });
 });
-// --- END: EDIT STONE ROUTES ---
 
 // POST /admin/delete-stone (Protected by canDelete)
 app.post('/admin/delete-stone', isAuthenticated, canDelete, (req, res) => {
@@ -537,6 +532,20 @@ app.post('/admin/delete-stone', isAuthenticated, canDelete, (req, res) => {
         res.redirect('/admin/manage');
     });
 });
+
+// --- NEW: DELETE ALL STONES ROUTE (Protected by isSuperAdmin) ---
+app.post('/admin/delete-all-stones', isAuthenticated, isSuperAdmin, (req, res) => {
+    db.run("DELETE FROM stones", [], (err) => {
+        if (err) {
+            console.error(err);
+            logAction(req.user, 'DELETE_ALL_STONES_FAIL', `Error: ${err.message}`);
+            return res.redirect('/admin/manage'); // Add error message later if needed
+        }
+        logAction(req.user, 'DELETE_ALL_STONES', 'User successfully deleted all stones.');
+        res.redirect('/admin/manage');
+    });
+});
+// --- END: DELETE ALL STONES ROUTE ---
 
 // --- UPDATED USER MANAGEMENT (Protected by isSuperAdmin) ---
 
@@ -598,7 +607,6 @@ app.get('/admin/edit-user/:id', isAuthenticated, isSuperAdmin, (req, res) => {
 app.post('/admin/update-user', isAuthenticated, isSuperAdmin, async (req, res) => {
     const { id, new_password, is_superadmin, can_add, can_delete, can_view_analytics } = req.body;
     
-    // Prevent superadmin from removing their own superadmin status
     if (id == req.user.id && !is_superadmin) {
         db.get("SELECT * FROM users WHERE id = ?", [id], (err, userToEdit) => {
              res.render('admin/edit_user', { 
@@ -609,17 +617,24 @@ app.post('/admin/update-user', isAuthenticated, isSuperAdmin, async (req, res) =
         return;
     }
     
-    // --- NEW: Handle Password Change ---
     let passwordSql = "";
     let passwordParams = [];
     if (new_password) {
+        if (new_password.length < 8) {
+             db.get("SELECT * FROM users WHERE id = ?", [id], (err, userToEdit) => {
+                 res.render('admin/edit_user', { 
+                    userToEdit: userToEdit,
+                    message: { type: 'error', text: 'Password must be at least 8 characters.' }
+                });
+             });
+             return;
+        }
         try {
             const hash = await bcrypt.hash(new_password, saltRounds);
             passwordSql = ", password_hash = ?";
             passwordParams.push(hash);
             logAction(req.user, 'EDIT_USER_PASSWORD', `Changed password for user ID: ${id}`);
         } catch (hashErr) {
-            // Handle hash error
              db.get("SELECT * FROM users WHERE id = ?", [id], (err, userToEdit) => {
                  res.render('admin/edit_user', { 
                     userToEdit: userToEdit,
@@ -629,7 +644,6 @@ app.post('/admin/update-user', isAuthenticated, isSuperAdmin, async (req, res) =
              return;
         }
     }
-    // --- END: Password Change ---
 
     const sql = `UPDATE users SET
                     is_superadmin = ?,
