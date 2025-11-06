@@ -1,0 +1,138 @@
+                                                                                                                                                                <!DOCTYPE html>
+                                                                                                                                                                <html lang="en">
+                                                                                                                                                                <head>
+                                                                                                                                                                    <meta charset="UTF-8">
+                                                                                                                                                                    <title>Diamond: <%= stock_id %></title>
+                                                                                                                                                                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                                                                                                                                                                    <!-- Tailwind CSS CDN -->
+                                                                                                                                                                    <script src="https://cdn.tailwindcss.com"></script>
+                                                                                                                                                                </head>
+                                                                                                                                                                <body class="bg-white min-h-screen">
+
+                                                                                                                                                                    <main class="mx-auto max-w-4xl">
+
+                                                                                                                                                                        <!-- 
+                                                                                                                                                                          VIDEO PLAYER
+                                                                                                                                                                          - 1:1 Square aspect ratio on mobile
+                                                                                                                                                                          - 16:9 Video aspect ratio on desktop (sm: and up)
+                                                                                                                                                                        -->
+                                                                                                                                                                        <div class="w-full aspect-[1/1] sm:aspect-video bg-gray-100">
+                                                                                                                                                                            <!-- video_html is passed from the server and is "unsafe" (raw HTML) -->
+                                                                                                                                                                            <%- video_html %>
+                                                                                                                                                                        </div>
+
+                                                                                                                                                                        <!-- All content below the video has padding -->
+                                                                                                                                                                        <div class="bg-white p-4 sm:p-6 rounded-lg">
+
+                                                                                                                                                                            <!-- Share Section -->
+                                                                                                                                                                            <div class="mb-6">
+                                                                                                                                                                                <h2 class="text-2xl font-semibold mb-3 text-gray-800">Share</h2>
+                                                                                                                                                                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                                                                                                                                                                    <!-- Share Page Button -->
+                                                                                                                                                                                    <button onclick="shareData('sharePage', this)"
+                                                                                                                                                                                       class="w-full block text-center bg-gray-700 hover:bg-gray-800 text-white font-medium py-3 px-4 rounded-lg text-sm sm:text-base transition duration-200">
+                                                                                                                                                                                       Share Page
+                                                                                                                                                                                    </button>
+
+                                                                                                                                                                                    <!-- Share Video Button -->
+                                                                                                                                                                                    <% if (video_url) { %>
+                                                                                                                                                                                        <button onclick="shareData('shareVideo', this)"
+                                                                                                                                                                                           class="w-full block text-center bg-gray-500 hover:bg-gray-600 text-white font-medium py-3 px-4 rounded-lg text-sm sm:text-base transition duration-200">
+                                                                                                                                                                                           Share Video Link
+                                                                                                                                                                                        </button>
+                                                                                                                                                                                    <% } else { %>
+                                                                                                                                                                                        <button disabled class="w-full block text-center bg-gray-300 text-gray-500 font-medium py-3 px-4 rounded-lg text-sm sm:text-base cursor-not-allowed">
+                                                                                                                                                                                           No Video Link
+                                                                                                                                                                                        </button>
+                                                                                                                                                                                    <% } %>
+
+                                                                                                                                                                                    <!-- Share Certificate Button -->
+                                                                                                                                                                                    <% if (certificate_url) { %>
+                                                                                                                                                                                        <button onclick="shareData('shareCert', this)"
+                                                                                                                                                                                           class="w-full block text-center bg-gray-500 hover:bg-gray-600 text-white font-medium py-3 px-4 rounded-lg text-sm sm:text-base transition duration-200">
+                                                                                                                                                                                           Share Certificate Link
+                                                                                                                                                                                        </button>
+                                                                                                                                                                                    <% } else { %>
+                                                                                                                                                                                        <button disabled class="w-full block text-center bg-gray-300 text-gray-500 font-medium py-3 px-4 rounded-lg text-sm sm:text-base cursor-not-allowed">
+                                                                                                                                                                                           No Certificate Link
+                                                                                                                                                                                        </button>
+                                                                                                                                                                                    <% } %>
+                                                                                                                                                                                </div>
+                                                                                                                                                                            </div>
+
+                                                                                                                                                                            <!-- Certificate Button -->
+                                                                                                                                                                            <div>
+                                                                                                                                                                                <h2 class="text-2xl font-semibold mb-3 text-gray-800">Certificate</h2>
+                                                                                                                                                                                <% if (certificate_url) { %>
+                                                                                                                                                                                    <a href="<%= certificate_url %>"
+                                                                                                                                                                                       target="_blank"
+                                                                                                                                                                                       rel="noopener noreferrer"
+                                                                                                                                                                                       class="w-full block text-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-6 rounded-lg text-xl transition duration-200">
+                                                                                                                                                                                       View Certificate
+                                                                                                                                                                                    </a>
+                                                                                                                                                                                <% } else { %>
+                                                                                                                                                                                    <button
+                                                                                                                                                                                       disabled
+                                                                                                                                                                                       class="w-full block text-center bg-gray-300 text-gray-500 font-bold py-4 px-6 rounded-lg cursor-not-allowed text-xl">
+                                                                                                                                                                                       No Certificate Available
+                                                                                                                                                                                    </button>
+                                                                                                                                                                                <% } %>
+                                                                                                                                                                            </div>
+
+                                                                                                                                                                        </div>
+                                                                                                                                                                    </main>
+
+                                                                                                                                                                    <!-- 
+                                                                                                                                                                      JavaScript for Share Buttons
+                                                                                                                                                                    -->
+                                                                                                                                                                    <script>
+                                                                                                                                                                        // --- Share Button Logic ---
+                                                                                                                                                                        const shareLinks = {
+                                                                                                                                                                            sharePage: '<%= publicUrl %>',
+                                                                                                                                                                            shareVideo: '<%= video_url || "" %>',
+                                                                                                                                                                            shareCert: '<%= certificate_url || "" %>'
+                                                                                                                                                                        };
+
+                                                                                                                                                                        async function shareData(type, buttonElement) {
+                                                                                                                                                                            const urlToShare = shareLinks[type];
+                                                                                                                                                                            if (!urlToShare) return; // Do nothing if URL is empty
+
+                                                                                                                                                                            const shareTitle = 'Diamond <%= stock_id %>';
+                                                                                                                                                                            const shareText = 'Check out this diamond: <%= stock_id %>';
+
+                                                                                                                                                                            // Data for the share action
+                                                                                                                                                                            const shareData = {
+                                                                                                                                                                                title: shareTitle,
+                                                                                                                                                                                text: shareText,
+                                                                                                                                                                                url: urlToShare,
+                                                                                                                                                                            };
+
+                                                                                                                                                                            // Try using the native Web Share API (common on mobile)
+                                                                                                                                                                            if (navigator.share) {
+                                                                                                                                                                                try {
+                                                                                                                                                                                    await navigator.share(shareData);
+                                                                                                                                                                                    console.log('Shared successfully');
+                                                                                                                                                                                } catch (err) {
+                                                                                                                                                                                    console.error('Error sharing:', err);
+                                                                                                                                                                                }
+                                                                                                                                                                            } else {
+                                                                                                                                                                                // Fallback for desktops: copy link to clipboard
+                                                                                                                                                                                try {
+                                                                                                                                                                                    await navigator.clipboard.writeText(urlToShare);
+
+                                                                                                                                                                                    const originalText = buttonElement.innerHTML;
+                                                                                                                                                                                    buttonElement.innerHTML = 'Copied!';
+                                                                                                                                                                                    buttonElement.disabled = true;
+                                                                                                                                                                                    setTimeout(() => {
+                                                                                                                                                                                        buttonElement.innerHTML = originalText;
+                                                                                                                                                                                        buttonElement.disabled = false;
+                                                                                                                                                                                    }, 2000); // Revert text after 2 seconds
+                                                                                                                                                                                } catch (err) {
+                                                                                                                                                                                    console.error('Failed to copy: ', err);
+                                                                                                                                                                                }
+                                                                                                                                                                            }
+                                                                                                                                                                        }
+                                                                                                                                                                    </script>
+
+                                                                                                                                                                </body>
+                                                                                                                                                                </html>

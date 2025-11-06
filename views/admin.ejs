@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <nav class="bg-white shadow-md">
+        <div class="container mx-auto px-4 py-4 max-w-5xl">
+            <h1 class="text-2xl font-bold text-gray-900">Diamond Admin Panel</h1>
+        </div>
+    </nav>
+
+    <main class="container mx-auto px-4 py-10 max-w-5xl">
+
+        <!-- Upload Form -->
+        <div class="bg-white p-8 rounded-lg shadow-lg mb-8">
+            <h2 class="text-3xl font-bold mb-4">Upload Inventory</h2>
+            <p class="text-gray-600 mb-6">Upload an Excel (.xlsx) or CSV (.csv) file. This will **overwrite** all existing data.</p>
+
+            <!-- Status Message -->
+            <% if (message) { %>
+                <div class="mb-4 p-4 rounded-md <%= message.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800' %>">
+                    <%= message.text %>
+                </div>
+            <% } %>
+
+            <form action="/admin/upload" method="POST" enctype="multipart/form-data">
+                <div class="mb-4">
+                    <label for="diamondFile" class="block text-sm font-medium text-gray-700 mb-2">Data File (stock_id, video_url, certificate_url)</label>
+                    <input type="file" name="diamondFile" id="diamondFile" class="block w-full text-sm text-gray-500
+                        file:mr-4 file:py-2 file:px-4
+                        file:rounded-full file:border-0
+                        file:text-sm file:font-semibold
+                        file:bg-blue-50 file:text-blue-700
+                        hover:file:bg-blue-100"
+                        accept=".xlsx, .xls, .csv" required>
+                </div>
+                <div>
+                    <button type="submit" class="w-full py-3 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition duration-200">
+                        Upload and Process
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Current Database -->
+        <div class="bg-white p-8 rounded-lg shadow-lg">
+            <h2 class="text-3xl font-bold mb-4">Current Stock (<%= stockIds.length %>)</h2>
+            <% if (stockIds.length > 0) { %>
+                <ul class="list-disc list-inside text-gray-700">
+                    <% stockIds.forEach(id => { %>
+                        <li class="mb-2">
+                            <a href="/diamonds/<%= id %>" target="_blank" class="text-blue-600 hover:underline">
+                                /diamonds/<%= id %>
+                            </a>
+                        </li>
+                    <% }) %>
+                </ul>
+            <% } else { %>
+                <p class="text-gray-500">Database is empty. Upload a file to get started.</p>
+            <% } %>
+        </div>
+
+    </main>
+</body>
+</html>
