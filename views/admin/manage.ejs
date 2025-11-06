@@ -1,239 +1,246 @@
-                                                                                                <!DOCTYPE html>
-                                                                                                <html lang="en">
-                                                                                                <head>
-                                                                                                    <meta charset="UTF-8">
-                                                                                                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                                                                                                    <title>Manage Stones</title>
-                                                                                                    <!-- Tailwind CSS CDN -->
-                                                                                                    <script src="https://cdn.tailwindcss.com"></script>
-                                                                                                </head>
-                                                                                                <body class="bg-gray-100 min-h-screen">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manage Stones</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    
+    <!-- Admin Navigation Bar -->
+    <nav class="bg-white shadow-md">
+        <div class="container mx-auto px-4 max-w-7xl">
+            <div class="flex justify-between items-center h-16">
+                <!-- Logo/Title -->
+                <div class="flex-shrink-0 flex items-center">
+                    <h1 class="text-xl font-bold text-gray-900">Diamond CMS</h1>
+                </div>
+                <!-- Navigation Links (with permission checks) -->
+                <div class="hidden md:flex md:space-x-8">
+                    <a href="/admin" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Dashboard</a>
+                    <a href="/admin/manage" class="text-blue-600 border-b-2 border-blue-600 font-medium px-1 py-4">Manage Stones</a>
+                    
+                    <% if (user.is_superadmin) { %>
+                        <a href="/admin/users" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Manage Users</a>
+                    <% } %>
+                    
+                    <a href="/admin/history" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">History</a>
+                    
+                    <% if (user.is_superadmin || user.can_view_analytics) { %>
+                        <a href="/admin/analytics" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Analytics</a>
+                    <% } %>
+                </div>
+                <!-- User/Logout -->
+                <div class="flex items-center">
+                    <span class="text-gray-500 mr-4">Welcome, <%= user.username %>!</span>
+                    <a href="/logout" class="text-sm text-blue-600 hover:underline">Log Out</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Page Header -->
+    <header class="bg-white shadow-sm">
+        <div class="container mx-auto px-4 py-4 max-w-7xl">
+            <h2 class="text-2xl font-bold text-gray-900">Manage All Stones</h2>
+        </div>
+    </header>
 
-                                                                                                    <!-- Admin Navigation Bar -->
-                                                                                                    <nav class="bg-white shadow-md">
-                                                                                                        <div class="container mx-auto px-4 max-w-7xl">
-                                                                                                            <div class="flex justify-between items-center h-16">
-                                                                                                                <!-- Logo/Title -->
-                                                                                                                <div class="flex-shrink-0 flex items-center">
-                                                                                                                    <h1 class="text-xl font-bold text-gray-900">Diamond CMS</h1>
-                                                                                                                </div>
-                                                                                                                <!-- Navigation Links (with permission checks) -->
-                                                                                                                <div class="hidden md:flex md:space-x-8">
-                                                                                                                    <a href="/admin" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Dashboard</a>
-                                                                                                                    <a href="/admin/manage" class="text-blue-600 border-b-2 border-blue-600 font-medium px-1 py-4">Manage Stones</a>
+    <main class="container mx-auto px-4 py-8 max-w-7xl">
+        
+        <!-- Search Bar -->
+        <div class="bg-white p-6 rounded-lg shadow-lg mb-8">
+            <form action="/admin/manage" method="GET">
+                <label for="search" class="block text-sm font-medium text-gray-700 mb-2">Search Stock IDs</label>
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input type="text"
+                           name="search"
+                           id="search"
+                           class="flex-grow w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           placeholder="e.g. r999, j5038, r5208"
+                           value="<%= searchQuery %>">
+                    
+                    <button type"submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg">
+                        Search
+                    </button>
+                    <% if (searchQuery) { %>
+                        <a href="/admin/manage" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg text-center">
+                            Clear
+                        </a>
+                    <% } %>
+                </div>
+                <p class="text-xs text-gray-500 mt-2">Search for one or more stock IDs, separated by commas.</p>
+            </form>
+        </div>
 
-                                                                                                                    <% if (user.is_superadmin) { %>
-                                                                                                                        <a href="/admin/users" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Manage Users</a>
-                                                                                                                    <% } %>
+        <!-- Stones Table -->
+        <div class="bg-white p-8 rounded-lg shadow-lg overflow-x-auto">
+            <h3 class="text-2xl font-bold mb-6">Inventory (<%= stones.length %>)</h3>
+            
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock ID</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Video URL</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Certificate URL</th>
+                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    <% if (stones.length === 0) { %>
+                        <tr>
+                            <td colspan="4" class="px-6 py-4 text-center text-gray-500">
+                                <% if (searchQuery) { %>
+                                    No stones found matching your search.
+                                <% } else { %>
+                                    No stones found in database.
+                                <% } %>
+                            </td>
+                        </tr>
+                    <% } %>
+                    
+                    <% stones.forEach(stone => { %>
+                        <% let publicUrl = `${baseUrl}/diamonds/${stone.stock_id}`; %>
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <a href="<%= publicUrl %>" target="_blank" class="text-blue-600 hover:underline font-medium"><%= stone.stock_id %></a>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 truncate max-w-xs">
+                                <%= stone.video_url || 'N/A' %>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 truncate max-w-xs">
+                                <%= stone.certificate_url || 'N/A' %>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                <!-- Copy Link Button -->
+                                <button type="button" 
+                                        onclick="copyLink('<%= publicUrl %>', event)"
+                                        class="text-green-600 hover:text-green-900 mr-4">
+                                    Copy Link
+                                </button>
+                                
+                                <a href="/admin/qr/<%= stone.stock_id %>" target="_blank" class="text-blue-600 hover:text-blue-900 mr-4">
+                                    QR Code
+                                </a>
 
-                                                                                                                    <a href="/admin/history" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">History</a>
+                                <!-- NEW: Edit Button (Permission Check) -->
+                                <% if (user.is_superadmin || user.can_add) { %>
+                                    <a href="/admin/edit-stone/<%= stone.id %>" class="text-yellow-600 hover:text-yellow-900 mr-4">
+                                        Edit
+                                    </a>
+                                <% } %>
+                                
+                                <!-- Delete Button (Permission Check) -->
+                                <% if (user.is_superadmin || user.can_delete) { %>
+                                    <button type="button"
+                                            onclick="openDeleteModal('<%= stone.id %>', '<%= stone.stock_id %>')"
+                                            class="text-red-600 hover:text-red-900">
+                                        Delete
+                                    </button>
+                                <% } %>
+                            </td>
+                        </tr>
+                    <% }) %>
+                </tbody>
+            </table>
+        </div>
+    </main>
 
-                                                                                                                    <% if (user.is_superadmin || user.can_view_analytics) { %>
-                                                                                                                        <a href="/admin/analytics" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Analytics</a>
-                                                                                                                    <% } %>
-                                                                                                                </div>
-                                                                                                                <!-- User/Logout -->
-                                                                                                                <div class="flex items-center">
-                                                                                                                    <span class="text-gray-500 mr-4">Welcome, <%= user.username %>!</span>
-                                                                                                                    <a href="/logout" class="text-sm text-blue-600 hover:underline">Log Out</a>
-                                                                                                                </div>
-                                                                                                            </div>
-                                                                                                        </div>
-                                                                                                    </nav>
+    <!-- 
+      Delete Confirmation Modal
+    -->
+    <div id="deleteModal" class="fixed z-50 inset-0 overflow-y-auto hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <!-- Background overlay -->
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeDeleteModal()"></div>
 
-                                                                                                    <!-- Page Header -->
-                                                                                                    <header class="bg-white shadow-sm">
-                                                                                                        <div class="container mx-auto px-4 py-4 max-w-7xl">
-                                                                                                            <h2 class="text-2xl font-bold text-gray-900">Manage All Stones</h2>
-                                                                                                        </div>
-                                                                                                    </header>
+            <!-- Modal panel -->
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                    <div class="sm:flex sm:items-start">
+                        <!-- Warning Icon -->
+                        <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
+                            <svg class="h-6 w-6 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                        </div>
+                        <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
+                            <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
+                                Delete Stone
+                            </h3>
+                            <div class="mt-2">
+                                <p class="text-sm text-gray-500">
+                                    Are you sure you want to delete <strong id="modalStockId">...</strong>? This action cannot be undone.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                    <!-- The actual delete form -->
+                    <form id="deleteForm" action="/admin/delete-stone" method="POST" class="inline">
+                        <input type="hidden" id="deleteStoneId" name="id" value="">
+                        <input type="hidden" id="deleteStockId" name="stock_id" value="">
+                        <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
+                            Yes, Delete
+                        </button>
+                    </form>
+                    <button type="button"
+                            onclick="closeDeleteModal()"
+                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
-                                                                                                    <main class="container mx-auto px-4 py-8 max-w-7xl">
+    <!-- JavaScript for Modals and Copy Link -->
+    <script>
+        // --- Delete Modal Logic ---
+        const deleteModal = document.getElementById('deleteModal');
+        const modalStockId = document.getElementById('modalStockId');
+        const deleteStoneId = document.getElementById('deleteStoneId');
+        const deleteStockId = document.getElementById('deleteStockId');
 
-                                                                                                        <!-- Search Bar -->
-                                                                                                        <div class="bg-white p-6 rounded-lg shadow-lg mb-8">
-                                                                                                            <form action="/admin/manage" method="GET">
-                                                                                                                <label for="search" class="block text-sm font-medium text-gray-700 mb-2">Search Stock IDs</label>
-                                                                                                                <div class="flex flex-col sm:flex-row gap-2">
-                                                                                                                    <input type="text"
-                                                                                                                           name="search"
-                                                                                                                           id="search"
-                                                                                                                           class="flex-grow w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                                                                                                           placeholder="e.g. r999, j5038, r5208"
-                                                                                                                           value="<%= searchQuery %>">
+        function openDeleteModal(id, stock_id) {
+            modalStockId.textContent = stock_id;
+            deleteStoneId.value = id;
+            deleteStockId.value = stock_id; // For logging
+            deleteModal.classList.remove('hidden');
+        }
 
-                                                                                                                    <button type"submit" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg">
-                                                                                                                        Search
-                                                                                                                    </button>
-                                                                                                                    <% if (searchQuery) { %>
-                                                                                                                        <a href="/admin/manage" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg text-center">
-                                                                                                                            Clear
-                                                                                                                        </a>
-                                                                                                                    <% } %>
-                                                                                                                </div>
-                                                                                                                <p class="text-xs text-gray-500 mt-2">Search for one or more stock IDs, separated by commas.</p>
-                                                                                                            </form>
-                                                                                                        </div>
+        function closeDeleteModal() {
+            deleteModal.classList.add('hidden');
+        }
 
-                                                                                                        <!-- Stones Table -->
-                                                                                                        <div class="bg-white p-8 rounded-lg shadow-lg overflow-x-auto">
-                                                                                                            <h3 class="text-2xl font-bold mb-6">Inventory (<%= stones.length %>)</h3>
+        // --- Copy Link Logic ---
+        async function copyLink(urlToCopy, event) {
+            const buttonElement = event.target;
+            try {
+                await navigator.clipboard.writeText(urlToCopy);
+                
+                // Give feedback on the button that was clicked
+                const originalText = buttonElement.innerHTML;
+                buttonElement.innerHTML = 'Copied!';
+                buttonElement.disabled = true;
+                
+                setTimeout(() => {
+                    buttonElement.innerHTML = originalText;
+                    buttonElement.disabled = false;
+                }, 2000); // Revert text after 2 seconds
+            } catch (err) {
+                console.error('Failed to copy: ', err);
+                buttonElement.innerHTML = 'Error!';
+                 setTimeout(() => {
+                    buttonElement.innerHTML = "Copy Link";
+                }, 2000);
+            }
+        }
+    </script>
 
-                                                                                                            <table class="min-w-full divide-y divide-gray-200">
-                                                                                                                <thead class="bg-gray-50">
-                                                                                                                    <tr>
-                                                                                                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock ID</th>
-                                                                                                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Video URL</th>
-                                                                                                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Certificate URL</th>
-                                                                                                                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                                                                                                                    </tr>
-                                                                                                                </thead>
-                                                                                                                <tbody class="bg-white divide-y divide-gray-200">
-                                                                                                                    <% if (stones.length === 0) { %>
-                                                                                                                        <tr>
-                                                                                                                            <td colspan="4" class="px-6 py-4 text-center text-gray-500">
-                                                                                                                                <% if (searchQuery) { %>
-                                                                                                                                    No stones found matching your search.
-                                                                                                                                <% } else { %>
-                                                                                                                                    No stones found in database.
-                                                                                                                                <% } %>
-                                                                                                                            </td>
-                                                                                                                        </tr>
-                                                                                                                    <% } %>
-
-                                                                                                                    <% stones.forEach(stone => { %>
-                                                                                                                        <% let publicUrl = `${baseUrl}/diamonds/${stone.stock_id}`; %>
-                                                                                                                        <tr>
-                                                                                                                            <td class="px-6 py-4 whitespace-nowrap">
-                                                                                                                                <a href="<%= publicUrl %>" target="_blank" class="text-blue-600 hover:underline font-medium"><%= stone.stock_id %></a>
-                                                                                                                            </td>
-                                                                                                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 truncate max-w-xs">
-                                                                                                                                <%= stone.video_url || 'N/A' %>
-                                                                                                                            </td>
-                                                                                                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 truncate max-w-xs">
-                                                                                                                                <%= stone.certificate_url || 'N/A' %>
-                                                                                                                            </td>
-                                                                                                                            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                                                                                                                <!-- Copy Link Button -->
-                                                                                                                                <button type="button" 
-                                                                                                                                        onclick="copyLink('<%= publicUrl %>', event)"
-                                                                                                                                        class="text-green-600 hover:text-green-900 mr-4">
-                                                                                                                                    Copy Link
-                                                                                                                                </button>
-
-                                                                                                                                <a href="/admin/qr/<%= stone.stock_id %>" target="_blank" class="text-blue-600 hover:text-blue-900 mr-4">
-                                                                                                                                    QR Code
-                                                                                                                                </a>
-
-                                                                                                                                <!-- Permission Check for Delete Button -->
-                                                                                                                                <% if (user.is_superadmin || user.can_delete) { %>
-                                                                                                                                    <button type="button"
-                                                                                                                                            onclick="openDeleteModal('<%= stone.id %>', '<%= stone.stock_id %>')"
-                                                                                                                                            class="text-red-600 hover:text-red-900">
-                                                                                                                                        Delete
-                                                                                                                                    </button>
-                                                                                                                                <% } %>
-                                                                                                                            </td>
-                                                                                                                        </tr>
-                                                                                                                    <% }) %>
-                                                                                                                </tbody>
-                                                                                                            </table>
-                                                                                                        </div>
-                                                                                                    </main>
-
-                                                                                                    <!-- 
-                                                                                                      Delete Confirmation Modal
-                                                                                                    -->
-                                                                                                    <div id="deleteModal" class="fixed z-50 inset-0 overflow-y-auto hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
-                                                                                                        <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-                                                                                                            <!-- Background overlay -->
-                                                                                                            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeDeleteModal()"></div>
-
-                                                                                                            <!-- Modal panel -->
-                                                                                                            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-                                                                                                            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
-                                                                                                                <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                                                                                                                    <div class="sm:flex sm:items-start">
-                                                                                                                        <!-- Warning Icon -->
-                                                                                                                        <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
-                                                                                                                            <svg class="h-6 w-6 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
-                                                                                                                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                                                                                                                            </svg>
-                                                                                                                        </div>
-                                                                                                                        <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
-                                                                                                                            <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">
-                                                                                                                                Delete Stone
-                                                                                                                            </h3>
-                                                                                                                            <div class="mt-2">
-                                                                                                                                <p class="text-sm text-gray-500">
-                                                                                                                                    Are you sure you want to delete <strong id="modalStockId">...</strong>? This action cannot be undone.
-                                                                                                                                </p>
-                                                                                                                            </div>
-                                                                                                                        </div>
-                                                                                                                    </div>
-                                                                                                                </div>
-                                                                                                                <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-                                                                                                                    <!-- The actual delete form -->
-                                                                                                                    <form id="deleteForm" action="/admin/delete-stone" method="POST" class="inline">
-                                                                                                                        <input type="hidden" id="deleteStoneId" name="id" value="">
-                                                                                                                        <input type="hidden" id="deleteStockId" name="stock_id" value="">
-                                                                                                                        <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
-                                                                                                                            Yes, Delete
-                                                                                                                        </button>
-                                                                                                                    </form>
-                                                                                                                    <button type="button"
-                                                                                                                            onclick="closeDeleteModal()"
-                                                                                                                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
-                                                                                                                        Cancel
-                                                                                                                    </button>
-                                                                                                                </div>
-                                                                                                            </div>
-                                                                                                        </div>
-                                                                                                    </div>
-
-                                                                                                    <!-- JavaScript for Modals and Copy Link -->
-                                                                                                    <script>
-                                                                                                        // --- Delete Modal Logic ---
-                                                                                                        const deleteModal = document.getElementById('deleteModal');
-                                                                                                        const modalStockId = document.getElementById('modalStockId');
-                                                                                                        const deleteStoneId = document.getElementById('deleteStoneId');
-                                                                                                        const deleteStockId = document.getElementById('deleteStockId');
-
-                                                                                                        function openDeleteModal(id, stock_id) {
-                                                                                                            modalStockId.textContent = stock_id;
-                                                                                                            deleteStoneId.value = id;
-                                                                                                            deleteStockId.value = stock_id; // For logging
-                                                                                                            deleteModal.classList.remove('hidden');
-                                                                                                        }
-
-                                                                                                        function closeDeleteModal() {
-                                                                                                            deleteModal.classList.add('hidden');
-                                                                                                        }
-
-                                                                                                        // --- Copy Link Logic ---
-                                                                                                        async function copyLink(urlToCopy, event) {
-                                                                                                            const buttonElement = event.target;
-                                                                                                            try {
-                                                                                                                await navigator.clipboard.writeText(urlToCopy);
-
-                                                                                                                // Give feedback on the button that was clicked
-                                                                                                                const originalText = buttonElement.innerHTML;
-                                                                                                                buttonElement.innerHTML = 'Copied!';
-                                                                                                                buttonElement.disabled = true;
-
-                                                                                                                setTimeout(() => {
-                                                                                                                    buttonElement.innerHTML = originalText;
-                                                                                                                    buttonElement.disabled = false;
-                                                                                                                }, 2000); // Revert text after 2 seconds
-                                                                                                            } catch (err) {
-                                                                                                                console.error('Failed to copy: ', err);
-                                                                                                                buttonElement.innerHTML = 'Error!';
-                                                                                                                 setTimeout(() => {
-                                                                                                                    buttonElement.innerHTML = "Copy Link";
-                                                                                                                }, 2000);
-                                                                                                            }
-                                                                                                        }
-                                                                                                    </script>
-
-                                                                                                </body>
-                                                                                                </html>
+</body>
+</html>
