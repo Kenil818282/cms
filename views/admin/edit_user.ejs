@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit User: <%= userToEdit.username %></title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+    <!-- Admin Navigation Bar -->
+    <nav class="bg-white shadow-md">
+        <div class="container mx-auto px-4 max-w-7xl">
+            <div class="flex justify-between items-center h-16">
+                <!-- Logo/Title -->
+                <div class="flex-shrink-0 flex items-center">
+                    <h1 class="text-xl font-bold text-gray-900">Diamond CMS</h1>
+                </div>
+                <!-- Navigation Links (with permission checks) -->
+                <div class="hidden md:flex md:space-x-8">
+                    <a href="/admin" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Dashboard</a>
+                    <a href="/admin/manage" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Manage Stones</a>
+
+                    <% if (user.is_superadmin) { %>
+                        <a href="/admin/users" class="text-blue-600 border-b-2 border-blue-600 font-medium px-1 py-4">Manage Users</a>
+                    <% } %>
+
+                    <a href="/admin/history" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">History</a>
+
+                    <% if (user.is_superadmin || user.can_view_analytics) { %>
+                        <a href="/admin/analytics" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Analytics</a>
+                    <% } %>
+                </div>
+                <!-- User/Logout -->
+                <div class="flex items-center">
+                    <span class="text-gray-500 mr-4">Welcome, <%= user.username %>!</span>
+                    <a href="/logout" class="text-sm text-blue-600 hover:underline">Log Out</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Page Header -->
+    <header class="bg-white shadow-sm">
+        <div class="container mx-auto px-4 py-4 max-w-7xl">
+            <h2 class="text-2xl font-bold text-gray-900">Edit User Permissions</h2>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 py-8 max-w-7xl">
+
+        <div class="max-w-2xl mx-auto">
+            <!-- Status Message -->
+            <% if (message) { %>
+                <div class="mb-6 p-4 rounded-md <%= message.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800' %>">
+                    <%= message.text %>
+                </div>
+            <% } %>
+
+            <!-- Edit User Form -->
+            <div class="bg-white p-8 rounded-lg shadow-lg">
+                <h3 class="text-2xl font-bold mb-6">Editing: <%= userToEdit.username %></h3>
+
+                <form action="/admin/update-user" method="POST">
+                    <!-- Hidden field to send the user's ID -->
+                    <input type="hidden" name="id" value="<%= userToEdit.id %>">
+
+                    <!-- Permissions Checkboxes -->
+                    <div class="mt-6">
+                        <label class="block text-lg font-medium text-gray-900 mb-2">Permissions</label>
+                        <p class="text-sm text-gray-500 mb-4">Note: A "Super Admin" automatically gets all permissions.</p>
+                        <div class="space-y-4">
+                            <div class="flex items-center">
+                                <input id="can_add" name="can_add" type="checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                    <%= (userToEdit.can_add || userToEdit.is_superadmin) ? 'checked' : '' %>
+                                    <%= userToEdit.is_superadmin ? 'disabled' : '' %>>
+                                <label for="can_add" class="ml-3 block text-sm font-medium text-gray-700">Can Add Stones</label>
+                            </div>
+                            <div class="flex items-center">
+                                <input id="can_delete" name="can_delete" type="checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                    <%= (userToEdit.can_delete || userToEdit.is_superadmin) ? 'checked' : '' %>
+                                    <%= userToEdit.is_superadmin ? 'disabled' : '' %>>
+                                <label for="can_delete" class="ml-3 block text-sm font-medium text-gray-700">Can Delete Stones</label>
+                            </div>
+                            <div class="flex items-center">
+                                <input id="can_view_analytics" name="can_view_analytics" type="checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                    <%= (userToEdit.can_view_analytics || userToEdit.is_superadmin) ? 'checked' : '' %>
+                                    <%= userToEdit.is_superadmin ? 'disabled' : '' %>>
+                                <label for="can_view_analytics" class="ml-3 block text-sm font-medium text-gray-700">Can View Analytics</label>
+                            </div>
+                            <div class="flex items-center">
+                                <input id="is_superadmin" name="is_superadmin" type="checkbox" class="h-4 w-4 text-red-600 border-gray-300 rounded focus:ring-red-500"
+                                    <%= userToEdit.is_superadmin ? 'checked' : '' %>>
+                                <label for="is_superadmin" class="ml-3 block text-sm font-medium text-red-700">Is Super Admin</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-8 flex items-center space-x-4">
+                        <button type="submit" class="py-3 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-lg transition duration-200">
+                            Update Permissions
+                        </button>
+                        <a href="/admin/users" class="py-3 px-6 bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold rounded-lg text-lg transition duration-200">
+                            Cancel
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </main>
+
+</body>
+</html>
