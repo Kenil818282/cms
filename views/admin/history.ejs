@@ -52,7 +52,13 @@
 
         <!-- History Log Table -->
         <div class="bg-white p-8 rounded-lg shadow-lg overflow-x-auto">
-            <h3 class="text-2xl font-bold mb-6">Recent Logs (Last 100)</h3>
+            <!-- UPDATED: Added Download Button -->
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-2xl font-bold">Recent Logs (Last 100)</h3>
+                <a href="/admin/download-history" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm">
+                    Download All History
+                </a>
+            </div>
             
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
@@ -87,11 +93,11 @@
                                     let colorClass = 'bg-gray-100 text-gray-800'; // Default
                                     if (log.action_type.includes('DELETE')) {
                                         colorClass = 'bg-red-100 text-red-800';
-                                    } else if (log.action_type.includes('ADD')) {
+                                    } else if (log.action_type.includes('ADD') || log.action_type.includes('UPLOAD')) {
                                         colorClass = 'bg-green-100 text-green-800';
                                     } else if (log.action_type.includes('LOGIN') || log.action_type.includes('LOGOUT')) {
                                         colorClass = 'bg-blue-100 text-blue-800';
-                                    } else if (log.action_type.includes('EDIT')) {
+                                    } else if (log.action_type.includes('EDIT') || log.action_type.includes('DOWNLOAD')) {
                                         colorClass = 'bg-yellow-100 text-yellow-800';
                                     }
                                 %>
@@ -99,7 +105,7 @@
                                     <%= log.action_type %>
                                 </span>
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 max-w-md truncate">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 max-w-md truncate" title="<%= log.details %>">
                                 <%= log.details %>
                             </td>
                         </tr>
