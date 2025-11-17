@@ -1,7 +1,7 @@
 // --- Import Libraries ---
 const express = require('express');
 const path = require('path');
-const fs = require('fs'); // For File System operations (deleting PDFs)
+const fs = require('fs'); // For File System operations
 const multer = require('multer');
 const xlsx = require('xlsx');
 const bcrypt = require('bcrypt');
@@ -29,12 +29,11 @@ app.set('views', path.join(__dirname, 'views'));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public')); // For future static files
 
-// --- NEW: Create 'uploads' folder and make it public ---
+// --- Create 'uploads' folder and make it public ---
 const uploadDir = path.join(__dirname, 'public/uploads');
 if (!fs.existsSync(uploadDir)){
     fs.mkdirSync(uploadDir, { recursive: true });
 }
-// This makes /uploads/123.pdf available to the public
 app.use('/uploads', express.static(uploadDir));
 // --- END NEW ---
 
@@ -654,8 +653,9 @@ app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, (req, res) => {
 
 // POST /admin/update-stone (UPDATED for new DB structure)
 app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
-    const { id, video_url, lab, certificate_number } = req.body;
+    const { id, lab, certificate_number } = req.body;
     const stock_id = (req.body.stock_id || '').trim().toUpperCase();
+    const video_url = req.body.video_url || null;
 
     if (!stock_id) {
         db.get("SELECT * FROM stones WHERE id = ?", [id], (err, stone) => {
@@ -717,7 +717,6 @@ app.post('/admin/delete-pdf', isAuthenticated, canAdd, (req, res) => {
                 logAction(req.user, 'DELETE_PDF', `Deleted PDF for stone: ${stone.stock_id}`);
                 
                 // 4. Redirect back to the edit page with a success message
-                // We must refetch the stone data to render the page
                 db.get("SELECT * FROM stones WHERE id = ?", [id], (err_fetch, updatedStone) => {
                     res.render('admin/edit_stone', { 
                         stone: updatedStone, 
@@ -739,11 +738,9 @@ app.post('/admin/delete-pdf', isAuthenticated, canAdd, (req, res) => {
 app.post('/admin/delete-stone', isAuthenticated, canDelete, (req, res) => {
     const { id, stock_id } = req.body;
 
-    // 1. Find the stone to get its PDF path
     db.get("SELECT certificate_pdf_path FROM stones WHERE id = ?", [id], (err, stone) => {
         if (err) console.error(err);
         if (stone && stone.certificate_pdf_path) {
-            // 2. Delete the PDF file from disk
             const pdfPath = path.join(__dirname, 'public', stone.certificate_pdf_path);
             fs.unlink(pdfPath, (unlinkErr) => {
                 if (unlinkErr && unlinkErr.code !== 'ENOENT') {
@@ -754,7 +751,6 @@ app.post('/admin/delete-stone', isAuthenticated, canDelete, (req, res) => {
             });
         }
         
-        // 3. Delete the stone from database
         db.run("DELETE FROM stones WHERE id = ?", [id], (err) => {
             if (err) console.error(err);
             else logAction(req.user, 'DELETE_STONE', `Deleted stone: ${stock_id} (ID: ${id})`);
@@ -765,7 +761,6 @@ app.post('/admin/delete-stone', isAuthenticated, canDelete, (req, res) => {
 
 // POST /admin/delete-all-stones (UPDATED to delete all PDFs)
 app.post('/admin/delete-all-stones', isAuthenticated, isSuperAdmin, (req, res) => {
-    // 1. Delete all rows from 'stones' table
     db.run("DELETE FROM stones", [], (err) => {
         if (err) {
             console.error(err);
@@ -775,7 +770,6 @@ app.post('/admin/delete-all-stones', isAuthenticated, isSuperAdmin, (req, res) =
         
         logAction(req.user, 'DELETE_ALL_STONES', 'User successfully deleted all stones.');
         
-        // 2. Clear out the /uploads directory
         fs.readdir(uploadDir, (err, files) => {
             if (err) return console.error("Could not read uploads dir:", err);
             for (const file of files) {
@@ -942,6 +936,78 @@ app.get('/admin/history', isAuthenticated, (req, res) => {
     db.all("SELECT * FROM history_logs ORDER BY timestamp DESC LIMIT 100", [], (err, logs) => {
         if (err) return res.status(500).send("Server error");
         res.render('admin/history', { logs: logs });
+    });
+});
+
+// --- NEW: Download History Route ---
+app.get('/admin/download-history', isAuthenticated, (req, res) => {
+    db.all("SELECT * FROM history_logs ORDER BY timestamp DESC", [], (err, logs) => {
+        if (err) {
+            console.error(err);
+            return res.status(500).send("Error fetching logs.");
+        }
+        
+        // Format logs for Excel
+        const data = logs.map(log => ({
+            timestamp: new Date(log.timestamp).toLocaleString(),
+            username: log.username,
+            action_type: log.action_type,
+            details: log.details
+        }));
+
+        const newSheet = xlsx.utils.json_to_sheet(data);
+        const newWorkbook = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(newWorkbook, newSheet, 'Action History');
+        
+        const buffer = xlsx.write(newWorkbook, { type: 'buffer', bookType: 'xlsx' });
+        
+        logAction(req.user, 'DOWNLOAD_HISTORY', `Downloaded ${data.length} history logs.`);
+        
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename=action_history.xlsx');
+        res.send(buffer);
+    });
+});
+
+// --- NEW: Download Stones Route ---
+app.get('/admin/download-stones', isAuthenticated, (req, res) => {
+    const baseUrl = req.protocol + '://' + req.get('host');
+    
+    db.all("SELECT * FROM stones ORDER BY stock_id ASC", [], (err, stones) => {
+        if (err) {
+            console.error(err);
+            return res.status(500).send("Error fetching stones.");
+        }
+        
+        // Format data for Excel, including the final link
+        const data = stones.map(stone => {
+            let final_link = '';
+            if (stone.certificate_pdf_path) {
+                final_link = `${baseUrl}${stone.certificate_pdf_path}`;
+            } else {
+                final_link = buildCertificateUrl(stone.lab, stone.certificate_number) || 'N/A';
+            }
+            
+            return {
+                stock_id: stone.stock_id,
+                video_url: stone.video_url,
+                lab: stone.lab,
+                certificate_number: stone.certificate_number,
+                final_certificate_link: final_link
+            };
+        });
+
+        const newSheet = xlsx.utils.json_to_sheet(data);
+        const newWorkbook = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(newWorkbook, newSheet, 'Stone Inventory');
+        
+        const buffer = xlsx.write(newWorkbook, { type: 'buffer', bookType: 'xlsx' });
+        
+        logAction(req.user, 'DOWNLOAD_STONES', `Downloaded ${data.length} stone records.`);
+        
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename=stone_inventory.xlsx');
+        res.send(buffer);
     });
 });
 
