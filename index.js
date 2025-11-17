@@ -193,7 +193,7 @@ function buildCertificateUrl(lab, certificate_number) {
         return null;
     }
     
-    const labUpper = lab.toUpperCase();
+    const labUpper = String(lab).toUpperCase();
     
     if (labUpper === 'GIA') {
         return `https://www.gia.edu/report-check?locale=en_US&reportno=${certificate_number}`;
@@ -233,7 +233,7 @@ async function logClickAnalytics(clickId, ipAddress) {
         console.log(`Detected test IP (${ipAddress}). Simulating location.`);
         locationData = {
             country: 'United States',
-            country_code: 'US', // <-- This will show the US flag
+            country_code: 'US',
             city: 'Test Location',
             isp: 'Test ISP'
         };
@@ -328,9 +328,7 @@ app.get('/diamonds/:stockId', (req, res) => {
         const publicUrl = `${baseUrl}/diamonds/${row.stock_id}`;
         const video_html = getVideoEmbedHtml(row.video_url);
 
-        // --- ================================== ---
-        // --- NEW: HYBRID CERTIFICATE LOGIC ---
-        // --- ================================== ---
+        // --- HYBRID CERTIFICATE LOGIC ---
         let cert_type = 'none';
         let certificate_url_to_show = null;
 
@@ -538,7 +536,6 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, excelUpload.single('diam
 const pdfStorage = multer.diskStorage({
     destination: uploadDir,
     filename: (req, file, cb) => {
-        // We MUST sanitize the filename
         const originalName = file.originalname;
         const sanitizedName = originalName.replace(/[^a-zA-Z0-9.\-]/g, '_'); // Replace weird characters
         cb(null, sanitizedName);
@@ -554,7 +551,6 @@ const pdfUpload = multer({
     }
 });
 
-// The new route, accepts an array of files
 app.post('/admin/upload-pdf', isAuthenticated, canAdd, pdfUpload.array('pdfFiles'), (req, res) => {
     if (!req.files || req.files.length === 0) {
         return res.redirect('/admin/manage');
@@ -566,9 +562,8 @@ app.post('/admin/upload-pdf', isAuthenticated, canAdd, pdfUpload.array('pdfFiles
     const sql = "UPDATE stones SET certificate_pdf_path = ? WHERE certificate_number = ?";
 
     for (const file of req.files) {
-        // Get '1234567' from '1234567.pdf'
         const certNumber = path.basename(file.filename, '.pdf');
-        const pdfPath = `/uploads/${file.filename}`; // The public URL path
+        const pdfPath = `/uploads/${file.filename}`;
 
         const promise = new Promise((resolve, reject) => {
             db.run(sql, [pdfPath, certNumber], function(err) {
@@ -580,7 +575,6 @@ app.post('/admin/upload-pdf', isAuthenticated, canAdd, pdfUpload.array('pdfFiles
                     filesMatched++;
                 } else {
                     filesUnmatched++;
-                    // Delete the unmatched file
                     fs.unlink(file.path, (err) => { if (err) console.error("Error deleting unmatched PDF:", err); });
                 }
                 resolve();
@@ -700,6 +694,47 @@ app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
     });
 });
 
+// --- NEW: DELETE PDF ROUTE ---
+app.post('/admin/delete-pdf', isAuthenticated, canAdd, (req, res) => {
+    const { id } = req.body;
+    
+    // 1. Find the stone to get its PDF path
+    db.get("SELECT * FROM stones WHERE id = ?", [id], (err, stone) => {
+        if (err) console.error(err);
+        if (stone && stone.certificate_pdf_path) {
+            
+            // 2. Delete the PDF file from disk
+            const pdfPath = path.join(__dirname, 'public', stone.certificate_pdf_path);
+            fs.unlink(pdfPath, (unlinkErr) => {
+                if (unlinkErr && unlinkErr.code !== 'ENOENT') {
+                    console.error("Error deleting PDF file:", unlinkErr);
+                }
+            });
+            
+            // 3. Set the PDF path to NULL in the database
+            db.run("UPDATE stones SET certificate_pdf_path = NULL WHERE id = ?", [id], (updateErr) => {
+                if (updateErr) console.error(updateErr);
+                logAction(req.user, 'DELETE_PDF', `Deleted PDF for stone: ${stone.stock_id}`);
+                
+                // 4. Redirect back to the edit page with a success message
+                // We must refetch the stone data to render the page
+                db.get("SELECT * FROM stones WHERE id = ?", [id], (err_fetch, updatedStone) => {
+                    res.render('admin/edit_stone', { 
+                        stone: updatedStone, 
+                        message: { type: 'success', text: 'PDF successfully deleted.' }
+                    });
+                });
+            });
+
+        } else {
+            // No PDF to delete, just go back
+            res.redirect(`/admin/edit-stone/${id}`);
+        }
+    });
+});
+// --- END: DELETE PDF ROUTE ---
+
+
 // POST /admin/delete-stone (UPDATED to delete PDF)
 app.post('/admin/delete-stone', isAuthenticated, canDelete, (req, res) => {
     const { id, stock_id } = req.body;
@@ -711,7 +746,7 @@ app.post('/admin/delete-stone', isAuthenticated, canDelete, (req, res) => {
             // 2. Delete the PDF file from disk
             const pdfPath = path.join(__dirname, 'public', stone.certificate_pdf_path);
             fs.unlink(pdfPath, (unlinkErr) => {
-                if (unlinkErr && unlinkErr.code !== 'ENOENT') { // Don't error if file already gone
+                if (unlinkErr && unlinkErr.code !== 'ENOENT') {
                     console.error("Error deleting PDF file:", unlinkErr);
                 } else {
                     console.log(`Deleted PDF: ${pdfPath}`);
