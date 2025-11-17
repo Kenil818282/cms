@@ -50,7 +50,7 @@
 
     <main class="container mx-auto px-4 py-8 max-w-7xl">
         
-        <!-- Status Message -->
+        <!-- Status Message (for Delete All) -->
         <% if (message) { %>
             <div class="mb-6 p-4 rounded-md <%= message.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800' %>">
                 <%= message.text %>
@@ -60,7 +60,7 @@
         <!-- Search Bar -->
         <div class="bg-white p-6 rounded-lg shadow-lg mb-8">
             <form action="/admin/manage" method="GET">
-                <label for="search" class="block text-sm font-medium text-gray-700 mb-2">Search Stock IDs</label>
+                <label for="search" class="block text-sm font-medium text-gray-700 mb-2">Search Stock IDs (Case-Insensitive)</label>
                 <div class="flex flex-col sm:flex-row gap-2">
                     <input type="text"
                            name="search"
@@ -81,6 +81,30 @@
                 <p class="text-xs text-gray-500 mt-2">Search for one or more stock IDs, separated by commas.</p>
             </form>
         </div>
+        
+        <!-- NEW: Stock Link Generator (Permission Check) -->
+        <% if (user.is_superadmin || user.can_add) { %>
+        <div class="bg-white p-6 rounded-lg shadow-lg mb-8">
+            <h3 class="text-xl font-bold text-gray-900 mb-4">Stock Link Generator</h3>
+            <p class="text-sm text-gray-600 mb-4">Upload an Excel/CSV file with a single column of `stock_id`s. The app will return a new file with all the public links.</p>
+            <form action="/admin/generate-links" method="POST" enctype="multipart/form-data">
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input type="file" name="stockFile" id="stockFile" class="flex-grow block w-full text-sm text-gray-500
+                        file:mr-4 file:py-3 file:px-4
+                        file:rounded-lg file:border-0
+                        file:text-sm file:font-semibold
+                        file:bg-blue-50 file:text-blue-700
+                        hover:file:bg-blue-100"
+                        accept=".xlsx, .xls, .csv" required>
+                    <button type="submit" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg">
+                        Generate Links
+                    </button>
+                </div>
+            </form>
+        </div>
+        <% } %>
+        <!-- END: Stock Link Generator -->
+
 
         <!-- Stones Table -->
         <div class="bg-white p-8 rounded-lg shadow-lg overflow-x-auto">
@@ -132,7 +156,7 @@
                                     QR Code
                                 </a>
 
-                                <!-- NEW: Edit Button (Permission Check) -->
+                                <!-- Edit Button (Permission Check) -->
                                 <% if (user.is_superadmin || user.can_add) { %>
                                     <a href="/admin/edit-stone/<%= stone.id %>" class="text-yellow-600 hover:text-yellow-900 mr-4">
                                         Edit
@@ -154,7 +178,7 @@
             </table>
         </div>
 
-        <!-- NEW: Danger Zone (Super Admin Only) -->
+        <!-- Danger Zone (Super Admin Only) -->
         <% if (user.is_superadmin) { %>
         <div class="bg-red-50 border-l-4 border-red-500 p-6 rounded-lg shadow-lg mt-8">
             <h3 class="text-2xl font-bold text-red-900">Danger Zone</h3>
@@ -208,7 +232,7 @@
                     <form id="deleteForm" action="/admin/delete-stone" method="POST" class="inline">
                         <input type="hidden" id="deleteStoneId" name="id" value="">
                         <input type="hidden" id="deleteStockId" name="stock_id" value="">
-                        <button type="submit" classm="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
+                        <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
                             Yes, Delete
                         </button>
                     </form>
@@ -223,7 +247,7 @@
     </div>
 
     <!-- 
-      NEW: Delete ALL Stones Confirmation Modal
+      Delete ALL Stones Confirmation Modal
     -->
     <div id="deleteAllModal" class="fixed z-50 inset-0 overflow-y-auto hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
         <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
@@ -289,7 +313,7 @@
             deleteModal.classList.add('hidden');
         }
 
-        // --- NEW: Delete All Modal Logic ---
+        // --- Delete All Modal Logic ---
         const deleteAllModal = document.getElementById('deleteAllModal');
 
         function openDeleteAllModal() {
