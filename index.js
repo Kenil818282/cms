@@ -177,6 +177,27 @@ function getVideoEmbedHtml(video_url) {
     }
 }
 
+// --- NEW HELPER: Build Certificate URL ---
+function buildCertificateUrl(lab, certificate_number) {
+    if (!lab || !certificate_number) {
+        return null;
+    }
+    
+    const labUpper = lab.toUpperCase();
+    
+    if (labUpper === 'GIA') {
+        return `https://www.gia.edu/report-check?locale=en_US&reportno=${certificate_number}`;
+    } else if (labUpper === 'IGI') {
+        return `https://www.igi.org/Verify-Your-Report/?r=${certificate_number}`;
+    }
+    
+    // Add more labs here if you want
+    // else if (labUpper === 'HRD') { ... }
+    
+    return null; // Return null if lab is not recognized
+}
+// --- END NEW HELPER ---
+
 // HELPER: Automatic social media/referrer parser
 function parseReferrer(referrer) {
     if (!referrer || referrer === 'Direct') {
@@ -206,7 +227,7 @@ async function logClickAnalytics(clickId, ipAddress) {
         console.log(`Detected test IP (${ipAddress}). Simulating location.`);
         locationData = {
             country: 'United States',
-            country_code: 'US', // <-- This will show the US flag
+            country_code: 'US',
             city: 'Test Location',
             isp: 'Test ISP'
         };
@@ -253,11 +274,9 @@ async function logClickAnalytics(clickId, ipAddress) {
 // --- PUBLIC ROUTE ---
 // --- ================================== ---
 
-// GET /diamonds/:stockId - Public page (NOW CASE-INSENSITIVE)
+// GET /diamonds/:stockId - Public page (NOW CASE-INSENSITIVE & BUILDS CERT LINK)
 app.get('/diamonds/:stockId', (req, res) => {
-    // --- CASE-INSENSITIVE FIX ---
     const stock_id_from_url = (req.params.stockId || '').toUpperCase();
-    // --- END FIX ---
     
     db.get("SELECT * FROM stones WHERE stock_id = ?", [stock_id_from_url], (err, row) => {
         if (err) {
@@ -265,7 +284,6 @@ app.get('/diamonds/:stockId', (req, res) => {
             return res.status(500).send("Server error");
         }
         if (!row) {
-            // Show the 404 page, but display the ID as the user typed it
             return res.status(404).render('404', { stock_id: req.params.stockId });
         }
         
@@ -291,8 +309,7 @@ app.get('/diamonds/:stockId', (req, res) => {
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         
         db.run(sql, [
-            row.stock_id, // Log the *correct* uppercase ID
-            ipAddress,
+            row.stock_id, ipAddress,
             referrerInfo.source, referrerInfo.domain,
             uaString, device.browser.name, device.os.name,
             utmParams.source, utmParams.medium, utmParams.campaign
@@ -309,10 +326,14 @@ app.get('/diamonds/:stockId', (req, res) => {
         const publicUrl = `${baseUrl}/diamonds/${row.stock_id}`;
         const video_html = getVideoEmbedHtml(row.video_url);
 
+        // --- NEW: Build Certificate Link ---
+        const certificate_url = buildCertificateUrl(row.lab, row.certificate_number);
+        // --- END NEW ---
+
         res.render('diamond', {
             stock_id: row.stock_id,
             video_html: video_html,
-            certificate_url: row.certificate_url,
+            certificate_url: certificate_url, // Pass the newly built URL
             video_url: row.video_url,
             publicUrl: publicUrl
         });
@@ -388,16 +409,9 @@ app.get('/admin/manage', isAuthenticated, (req, res) => {
     let sql = "SELECT * FROM stones";
     let params = [];
     if (searchQuery) {
-        // --- CASE-INSENSITIVE FIX ---
-        // Split, trim, and convert all search terms to UPPERCASE
-        const searchTerms = searchQuery.split(',')
-                                     .map(term => term.trim().toUpperCase())
-                                     .filter(term => term.length > 0);
-        // --- END FIX ---
-                                     
+        const searchTerms = searchQuery.split(',').map(term => term.trim().toUpperCase()).filter(term => term.length > 0);
         if (searchTerms.length > 0) {
             const placeholders = searchTerms.map(() => '?').join(',');
-            // No need for UPPER() in SQL, since data is already uppercase
             sql += ` WHERE stock_id IN (${placeholders})`;
             params = searchTerms;
         }
@@ -417,7 +431,6 @@ app.get('/admin/manage', isAuthenticated, (req, res) => {
 
 // GET /admin/qr/:stockId
 app.get('/admin/qr/:stockId', isAuthenticated, (req, res) => {
-    // --- CASE-INSENSITIVE FIX ---
     const stock_id_from_url = (req.params.stockId || '').toUpperCase();
     const baseUrl = req.protocol + '://' + req.get('host');
     const publicUrl = `${baseUrl}/diamonds/${stock_id_from_url}?utm_source=qrcode&utm_medium=print`;
@@ -438,18 +451,20 @@ app.get('/admin/qr/:stockId', isAuthenticated, (req, res) => {
     });
 });
 
-// POST /admin/add-single (NOW CASE-INSENSITIVE)
+// POST /admin/add-single (UPDATED for new DB structure)
 app.post('/admin/add-single', isAuthenticated, canAdd, (req, res) => {
-    // --- CASE-INSENSITIVE FIX ---
+    // --- UPDATED ---
     const stock_id = (req.body.stock_id || '').trim().toUpperCase();
-    // --- END FIX ---
-    const { video_url, certificate_url } = req.body;
+    const { video_url, lab, certificate_number } = req.body;
+    // --- END UPDATED ---
     
     if (!stock_id) {
         return res.render('admin/dashboard', { message: { type: 'error', text: 'Stock ID is required.' }, showDisclaimer: false });
     }
-    const sql = "INSERT OR IGNORE INTO stones (stock_id, video_url, certificate_url) VALUES (?, ?, ?)";
-    db.run(sql, [stock_id, video_url, certificate_url], function(err) {
+    // --- UPDATED ---
+    const sql = "INSERT OR IGNORE INTO stones (stock_id, video_url, lab, certificate_number) VALUES (?, ?, ?, ?)";
+    db.run(sql, [stock_id, video_url, lab, certificate_number], function(err) {
+    // --- END UPDATED ---
         if (err) return res.render('admin/dashboard', { message: { type: 'error', text: 'Database error.' }, showDisclaimer: false });
         if (this.changes === 0) {
             return res.render('admin/dashboard', { message: { type: 'error', text: `Stock ID '${stock_id}' already exists.` }, showDisclaimer: false });
@@ -459,7 +474,7 @@ app.post('/admin/add-single', isAuthenticated, canAdd, (req, res) => {
     });
 });
 
-// POST /admin/upload-bulk (NOW CASE-INSENSITIVE)
+// POST /admin/upload-bulk (UPDATED for new DB structure)
 const upload = multer({ storage: multer.memoryStorage() });
 app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFile'), (req, res) => {
     if (!req.file) {
@@ -470,20 +485,26 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFi
         const sheetName = workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
         const jsonData = xlsx.utils.sheet_to_json(sheet);
-        const sql = "INSERT OR IGNORE INTO stones (stock_id, video_url, certificate_url) VALUES (?, ?, ?)";
+        
+        // --- UPDATED ---
+        const sql = "INSERT OR IGNORE INTO stones (stock_id, video_url, lab, certificate_number) VALUES (?, ?, ?, ?)";
+        // --- END UPDATED ---
+        
         let stonesAdded = 0;
         let stonesIgnored = 0;
         db.serialize(() => {
             const stmt = db.prepare(sql);
             for (const row of jsonData) {
-                // --- CASE-INSENSITIVE FIX ---
                 const stock_id = String(row.stock_id || '').trim().toUpperCase();
-                // --- END FIX ---
                 if (stock_id) {
-                    stmt.run(stock_id, row.video_url, row.certificate_url, function() {
-                        if (this.changes > 0) stonesAdded++;
+                    // --- UPDATED ---
+                    // Read the new columns from Excel
+                    stmt.run(stock_id, row.video_url, row.lab, row.certificate_number, function(err) {
+                        if (err) console.error("Error inserting row:", err.message);
+                        else if (this.changes > 0) stonesAdded++;
                         else stonesIgnored++;
                     });
+                    // --- END UPDATED ---
                 }
             }
             stmt.finalize((err) => {
@@ -499,62 +520,7 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFi
     }
 });
 
-// --- NEW: LINK GENERATOR ROUTE (Protected by canAdd) ---
-app.post('/admin/generate-links', isAuthenticated, canAdd, upload.single('stockFile'), (req, res) => {
-    if (!req.file) {
-        // This is a bit awkward, we're just redirecting.
-        // A full solution would use JS on the frontend to show the error.
-        return res.redirect('/admin/manage'); 
-    }
-    try {
-        const workbook = xlsx.read(req.file.buffer, { type: "buffer" });
-        const sheetName = workbook.SheetNames[0];
-        const sheet = workbook.Sheets[sheetName];
-        const jsonData = xlsx.utils.sheet_to_json(sheet);
-        
-        const baseUrl = req.protocol + '://' + req.get('host');
-        let outputData = [];
-
-        // Read the 'stock_id' from the first column of the uploaded file
-        for (const row of jsonData) {
-            // Find the first key in the row (e.g., 'stock_id' or 'My Stock ID Column')
-            const firstKey = Object.keys(row)[0];
-            if (firstKey) {
-                const stock_id = String(row[firstKey] || '').trim().toUpperCase();
-                if (stock_id) {
-                    outputData.push({
-                        stock_id: stock_id,
-                        public_link: `${baseUrl}/diamonds/${stock_id}`
-                    });
-                }
-            }
-        }
-        
-        // Create a new Excel file in memory
-        const newSheet = xlsx.utils.json_to_sheet(outputData);
-        const newWorkbook = xlsx.utils.book_new();
-        xlsx.utils.book_append_sheet(newWorkbook, newSheet, 'Generated Links');
-        
-        // Write the file to a buffer
-        const buffer = xlsx.write(newWorkbook, { type: 'buffer', bookType: 'xlsx' });
-
-        // Log this action
-        logAction(req.user, 'GENERATE_LINKS', `Generated ${outputData.length} stock links.`);
-        
-        // Send the file as a download
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', 'attachment; filename=generated_links.xlsx');
-        res.send(buffer);
-
-    } catch (error) {
-        console.error(error);
-        res.redirect('/admin/manage?error=generation_failed');
-    }
-});
-// --- END: LINK GENERATOR ROUTE ---
-
-
-// GET /admin/edit-stone/:id (Protected by canAdd)
+// GET /admin/edit-stone/:id (UPDATED for new DB structure)
 app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, (req, res) => {
     const stoneIdToEdit = req.params.id;
     db.get("SELECT * FROM stones WHERE id = ?", [stoneIdToEdit], (err, stone) => {
@@ -565,12 +531,12 @@ app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, (req, res) => {
     });
 });
 
-// POST /admin/update-stone (NOW CASE-INSENSITIVE)
+// POST /admin/update-stone (UPDATED for new DB structure)
 app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
-    // --- CASE-INSENSITIVE FIX ---
+    // --- UPDATED ---
+    const { id, video_url, lab, certificate_number } = req.body;
     const stock_id = (req.body.stock_id || '').trim().toUpperCase();
-    // --- END FIX ---
-    const { id, video_url, certificate_url } = req.body;
+    // --- END UPDATED ---
 
     if (!stock_id) {
         db.get("SELECT * FROM stones WHERE id = ?", [id], (err, stone) => {
@@ -582,13 +548,16 @@ app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
         return;
     }
 
+    // --- UPDATED ---
     const sql = `UPDATE stones SET 
                     stock_id = ?,
                     video_url = ?,
-                    certificate_url = ?
+                    lab = ?,
+                    certificate_number = ?
                  WHERE id = ?`;
     
-    db.run(sql, [stock_id, video_url, certificate_url, id], function(err) {
+    db.run(sql, [stock_id, video_url, lab, certificate_number, id], function(err) {
+    // --- END UPDATED ---
         if (err) {
             if (err.code === 'SQLITE_CONSTRAINT') {
                 db.get("SELECT * FROM stones WHERE id = ?", [id], (err_fetch, stone) => {
