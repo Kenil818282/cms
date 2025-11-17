@@ -36,15 +36,16 @@ function initDb() {
             });
         });
 
-        // --- UPDATED: Stones table ---
-        // We are REPLACING certificate_url with lab and certificate_number
+        // --- UPDATED: Stones table (FINAL) ---
+        // This is the "Hybrid" model: it has lab/number AND the optional PDF path
         db.run(`
             CREATE TABLE IF NOT EXISTS stones (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 stock_id TEXT UNIQUE NOT NULL,
                 video_url TEXT,
                 lab TEXT,
-                certificate_number TEXT
+                certificate_number TEXT,
+                certificate_pdf_path TEXT
             )
         `, (err) => {
             if (err) {
@@ -69,22 +70,32 @@ function initDb() {
             }
         });
 
-        // --- Analytics Table ---
+        // --- Analytics Table (FINAL) ---
+        // This has all the new columns for powerful, automatic analytics
         db.run(`
             CREATE TABLE IF NOT EXISTS link_clicks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 stock_id TEXT NOT NULL,
                 ip_address TEXT,
-                social_source TEXT,
-                referrer_domain TEXT,
+                
+                -- Automatic Source Detection --
+                social_source TEXT,  -- e.g., "Facebook", "Google", "Direct"
+                referrer_domain TEXT, -- e.g., "facebook.com", "google.com"
+
                 user_agent TEXT(1024),
+                
+                -- Location Data --
                 country TEXT,
                 country_code TEXT,
                 city TEXT,
                 isp TEXT,
+
+                -- Device Data (from ua-parser-js) --
                 browser TEXT,
                 os TEXT,
+
+                -- Marketing Data (for WhatsApp, QR, etc.) --
                 utm_source TEXT,
                 utm_medium TEXT,
                 utm_campaign TEXT
@@ -94,6 +105,7 @@ function initDb() {
                 console.error("Error creating link_clicks table:", err.message);
             }
         });
+        // --- END UPDATED ---
     });
 }
 
