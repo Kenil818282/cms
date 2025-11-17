@@ -1,113 +1,113 @@
-                                                                                                                                                <!DOCTYPE html>
-                                                                                                                                                <html lang="en">
-                                                                                                                                                <head>
-                                                                                                                                                    <meta charset="UTF-8">
-                                                                                                                                                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                                                                                                                                                    <title>Action History</title>
-                                                                                                                                                    <!-- Tailwind CSS CDN -->
-                                                                                                                                                    <script src="https://cdn.tailwindcss.com"></script>
-                                                                                                                                                </head>
-                                                                                                                                                <body class="bg-gray-100 min-h-screen">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Action History</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    
+    <!-- Admin Navigation Bar -->
+    <nav class="bg-white shadow-md">
+        <div class="container mx-auto px-4 max-w-7xl">
+            <div class="flex justify-between items-center h-16">
+                <!-- Logo/Title -->
+                <div class="flex-shrink-0 flex items-center">
+                    <h1 class="text-xl font-bold text-gray-900">Diamond CMS</h1>
+                </div>
+                <!-- Navigation Links (with permission checks) -->
+                <div class="hidden md:flex md:space-x-8">
+                    <a href="/admin" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Dashboard</a>
+                    <a href="/admin/manage" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Manage Stones</a>
+                    
+                    <% if (user.is_superadmin) { %>
+                        <a href="/admin/users" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Manage Users</a>
+                    <% } %>
+                    
+                    <a href="/admin/history" class="text-blue-600 border-b-2 border-blue-600 font-medium px-1 py-4">History</a>
+                    
+                    <% if (user.is_superadmin || user.can_view_analytics) { %>
+                        <a href="/admin/analytics" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Analytics</a>
+                    <% } %>
+                </div>
+                <!-- User/Logout -->
+                <div class="flex items-center">
+                    <span class="text-gray-500 mr-4">Welcome, <%= user.username %>!</span>
+                    <a href="/logout" class="text-sm text-blue-600 hover:underline">Log Out</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Page Header -->
+    <header class="bg-white shadow-sm">
+        <div class="container mx-auto px-4 py-4 max-w-7xl">
+            <h2 class="text-2xl font-bold text-gray-900">Admin Action History</h2>
+        </div>
+    </header>
 
-                                                                                                                                                    <!-- Admin Navigation Bar -->
-                                                                                                                                                    <nav class="bg-white shadow-md">
-                                                                                                                                                        <div class="container mx-auto px-4 max-w-7xl">
-                                                                                                                                                            <div class="flex justify-between items-center h-16">
-                                                                                                                                                                <!-- Logo/Title -->
-                                                                                                                                                                <div class="flex-shrink-0 flex items-center">
-                                                                                                                                                                    <h1 class="text-xl font-bold text-gray-900">Diamond CMS</h1>
-                                                                                                                                                                </div>
-                                                                                                                                                                <!-- Navigation Links (with permission checks) -->
-                                                                                                                                                                <div class="hidden md:flex md:space-x-8">
-                                                                                                                                                                    <a href="/admin" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Dashboard</a>
-                                                                                                                                                                    <a href="/admin/manage" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Manage Stones</a>
+    <main class="container mx-auto px-4 py-8 max-w-7xl">
 
-                                                                                                                                                                    <% if (user.is_superadmin) { %>
-                                                                                                                                                                        <a href="/admin/users" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Manage Users</a>
-                                                                                                                                                                    <% } %>
+        <!-- History Log Table -->
+        <div class="bg-white p-8 rounded-lg shadow-lg overflow-x-auto">
+            <h3 class="text-2xl font-bold mb-6">Recent Logs (Last 100)</h3>
+            
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Timestamp</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    <% if (logs.length === 0) { %>
+                        <tr>
+                            <td colspan="4" class="px-6 py-4 text-center text-gray-500">
+                                No history logs found.
+                            </td>
+                        </tr>
+                    <% } %>
+                    
+                    <% logs.forEach(log => { %>
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <!-- Format the timestamp to be more readable -->
+                                <%= new Date(log.timestamp).toLocaleString() %>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                                <%= log.username %>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                
+                                <%
+                                    let colorClass = 'bg-gray-100 text-gray-800'; // Default
+                                    if (log.action_type.includes('DELETE')) {
+                                        colorClass = 'bg-red-100 text-red-800';
+                                    } else if (log.action_type.includes('ADD')) {
+                                        colorClass = 'bg-green-100 text-green-800';
+                                    } else if (log.action_type.includes('LOGIN') || log.action_type.includes('LOGOUT')) {
+                                        colorClass = 'bg-blue-100 text-blue-800';
+                                    } else if (log.action_type.includes('EDIT')) {
+                                        colorClass = 'bg-yellow-100 text-yellow-800';
+                                    }
+                                %>
+                                <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full <%= colorClass %>">
+                                    <%= log.action_type %>
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 max-w-md truncate">
+                                <%= log.details %>
+                            </td>
+                        </tr>
+                    <% }) %>
+                </tbody>
+            </table>
+        </div>
+    </main>
 
-                                                                                                                                                                    <a href="/admin/history" class="text-blue-600 border-b-2 border-blue-600 font-medium px-1 py-4">History</a>
-
-                                                                                                                                                                    <% if (user.is_superadmin || user.can_view_analytics) { %>
-                                                                                                                                                                        <a href="/admin/analytics" class="text-gray-500 hover:text-gray-900 border-b-2 border-transparent hover:border-gray-300 font-medium px-1 py-4">Analytics</a>
-                                                                                                                                                                    <% } %>
-                                                                                                                                                                </div>
-                                                                                                                                                                <!-- User/Logout -->
-                                                                                                                                                                <div class="flex items-center">
-                                                                                                                                                                    <span class="text-gray-500 mr-4">Welcome, <%= user.username %>!</span>
-                                                                                                                                                                    <a href="/logout" class="text-sm text-blue-600 hover:underline">Log Out</a>
-                                                                                                                                                                </div>
-                                                                                                                                                            </div>
-                                                                                                                                                        </div>
-                                                                                                                                                    </nav>
-
-                                                                                                                                                    <!-- Page Header -->
-                                                                                                                                                    <header class="bg-white shadow-sm">
-                                                                                                                                                        <div class="container mx-auto px-4 py-4 max-w-7xl">
-                                                                                                                                                            <h2 class="text-2xl font-bold text-gray-900">Admin Action History</h2>
-                                                                                                                                                        </div>
-                                                                                                                                                    </header>
-
-                                                                                                                                                    <main class="container mx-auto px-4 py-8 max-w-7xl">
-
-                                                                                                                                                        <!-- History Log Table -->
-                                                                                                                                                        <div class="bg-white p-8 rounded-lg shadow-lg overflow-x-auto">
-                                                                                                                                                            <h3 class="text-2xl font-bold mb-6">Recent Logs (Last 100)</h3>
-
-                                                                                                                                                            <table class="min-w-full divide-y divide-gray-200">
-                                                                                                                                                                <thead class="bg-gray-50">
-                                                                                                                                                                    <tr>
-                                                                                                                                                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Timestamp</th>
-                                                                                                                                                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
-                                                                                                                                                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
-                                                                                                                                                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
-                                                                                                                                                                    </tr>
-                                                                                                                                                                </thead>
-                                                                                                                                                                <tbody class="bg-white divide-y divide-gray-200">
-                                                                                                                                                                    <% if (logs.length === 0) { %>
-                                                                                                                                                                        <tr>
-                                                                                                                                                                            <td colspan="4" class="px-6 py-4 text-center text-gray-500">
-                                                                                                                                                                                No history logs found.
-                                                                                                                                                                            </td>
-                                                                                                                                                                        </tr>
-                                                                                                                                                                    <% } %>
-
-                                                                                                                                                                    <% logs.forEach(log => { %>
-                                                                                                                                                                        <tr>
-                                                                                                                                                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                                                                                                                                                <!-- Format the timestamp to be more readable -->
-                                                                                                                                                                                <%= new Date(log.timestamp).toLocaleString() %>
-                                                                                                                                                                            </td>
-                                                                                                                                                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
-                                                                                                                                                                                <%= log.username %>
-                                                                                                                                                                            </td>
-                                                                                                                                                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-
-                                                                                                                                                                                <%
-                                                                                                                                                                                    let colorClass = 'bg-gray-100 text-gray-800'; // Default
-                                                                                                                                                                                    if (log.action_type.includes('DELETE')) {
-                                                                                                                                                                                        colorClass = 'bg-red-100 text-red-800';
-                                                                                                                                                                                    } else if (log.action_type.includes('ADD')) {
-                                                                                                                                                                                        colorClass = 'bg-green-100 text-green-800';
-                                                                                                                                                                                    } else if (log.action_type.includes('LOGIN') || log.action_type.includes('LOGOUT')) {
-                                                                                                                                                                                        colorClass = 'bg-blue-100 text-blue-800';
-                                                                                                                                                                                    } else if (log.action_type.includes('EDIT')) {
-                                                                                                                                                                                        colorClass = 'bg-yellow-100 text-yellow-800';
-                                                                                                                                                                                    }
-                                                                                                                                                                                %>
-                                                                                                                                                                                <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full <%= colorClass %>">
-                                                                                                                                                                                    <%= log.action_type %>
-                                                                                                                                                                                </span>
-                                                                                                                                                                            </td>
-                                                                                                                                                                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 max-w-md truncate">
-                                                                                                                                                                                <%= log.details %>
-                                                                                                                                                                            </td>
-                                                                                                                                                                        </tr>
-                                                                                                                                                                    <% }) %>
-                                                                                                                                                                </tbody>
-                                                                                                                                                            </table>
-                                                                                                                                                        </div>
-                                                                                                                                                    </main>
-
-                                                                                                                                                </body>
-                                                                                                                                                </html>
+</body>
+</html>
