@@ -82,7 +82,7 @@
             </form>
         </div>
         
-        <!-- NEW: Tool Grid (Link Generator & PDF Uploader) -->
+        <!-- Tool Grid (Link Generator & PDF Uploader) -->
         <% if (user.is_superadmin || user.can_add) { %>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
             
@@ -128,17 +128,21 @@
 
         <!-- Stones Table -->
         <div class="bg-white p-8 rounded-lg shadow-lg overflow-x-auto">
-            <h3 class="text-2xl font-bold mb-6">Inventory (<%= stones.length %>)</h3>
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-2xl font-bold">Inventory (<%= stones.length %>)</h3>
+                <!-- NEW: Download All Data Button -->
+                <a href="/admin/download-stones" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm">
+                    Download All Data
+                </a>
+            </div>
             
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                     <tr>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock ID</th>
-                        <!-- UPDATED COLUMNS -->
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lab</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cert Number</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PDF Status</th>
-                        <!-- END UPDATED -->
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                     </tr>
                 </thead>
@@ -161,14 +165,13 @@
                             <td class="px-6 py-4 whitespace-nowrap">
                                 <a href="<%= publicUrl %>" target="_blank" class="text-blue-600 hover:underline font-medium"><%= stone.stock_id %></a>
                             </td>
-                            <!-- UPDATED COLUMNS -->
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                 <%= stone.lab || 'N/A' %>
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                 <%= stone.certificate_number || 'N/A' %>
                             </td>
-                            <!-- NEW: PDF Status Column -->
+                            <!-- PDF Status Column -->
                             <td class="px-6 py-4 whitespace-nowrap text-sm">
                                 <% if (stone.certificate_pdf_path) { %>
                                     <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
@@ -180,7 +183,6 @@
                                     </span>
                                 <% } %>
                             </td>
-                            <!-- END UPDATED -->
                             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                 <!-- Copy Link Button -->
                                 <button type="button" 
