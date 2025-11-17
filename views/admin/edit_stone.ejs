@@ -108,7 +108,7 @@
                         <!-- This form is a "fake" button to delete the PDF -->
                         <form action="/admin/delete-pdf" method="POST" onsubmit="return confirm('Are you sure you want to delete this PDF? This cannot be undone.');">
                             <input type="hidden" name="id" value="<%= stone.id %>">
-                            <button type="submit" class="text-red-500 hover:text-red-700 text-sm font-medium">Delete PDF</Ubutton>
+                            <button type="submit" class="text-red-500 hover:text-red-700 text-sm font-medium">Delete PDF</button>
                         </form>
                     </div>
                     <p class="text-xs text-gray-500 mt-2">To replace this file, just upload a new PDF with the same certificate number (`<%= stone.certificate_number %>`) using the "Smart PDF Uploader" on the "Manage Stones" page.</p>
