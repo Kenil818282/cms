@@ -1,4 +1,4 @@
-// --- Import Libraries ---
+ // --- Import Libraries ---
 const express = require('express');
 const path = require('path');
 const fs = require('fs'); // For File System operations
@@ -425,6 +425,9 @@ app.get('/admin/manage', isAuthenticated, (req, res) => {
     if (req.query.error === 'pdf_upload_failed') {
         message = { type: 'error', text: 'PDF upload failed. Please check the file and try again.' };
     }
+    if (req.query.error === 'link_gen_failed') {
+        message = { type: 'error', text: 'Link Generator failed. Please check your file.' };
+    }
 
     let sql = "SELECT * FROM stones";
     let params = [];
@@ -509,9 +512,22 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, excelUpload.single('diam
         db.serialize(() => {
             const stmt = db.prepare(sql);
             for (const row of jsonData) {
-                const stock_id = String(row.stock_id || '').trim().toUpperCase();
+                // --- THIS IS THE FIX ---
+                // Find keys that *look like* our target keys, regardless of case or spacing
+                const stockIdKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'stock_id');
+                const videoUrlKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'video_url');
+                const labKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'lab');
+                const certNumKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'certificate_number');
+                
+                // Now use the *found* key to get the value
+                const stock_id = String(row[stockIdKey] || '').trim().toUpperCase();
+                const video_url = row[videoUrlKey] || null;
+                const lab = row[labKey] || null;
+                const certificate_number = row[certNumKey] || null;
+                // --- END FIX ---
+                
                 if (stock_id) {
-                    stmt.run(stock_id, row.video_url, row.lab, (row.certificate_number || null), function(err) {
+                    stmt.run(stock_id, video_url, lab, certificate_number, function(err) {
                         if (err) console.error("Error inserting row:", err.message);
                         else if (this.changes > 0) stonesAdded++;
                         else stonesIgnored++;
@@ -653,9 +669,8 @@ app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, (req, res) => {
 
 // POST /admin/update-stone (UPDATED for new DB structure)
 app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
-    const { id, lab, certificate_number } = req.body;
+    const { id, video_url, lab, certificate_number } = req.body;
     const stock_id = (req.body.stock_id || '').trim().toUpperCase();
-    const video_url = req.body.video_url || null;
 
     if (!stock_id) {
         db.get("SELECT * FROM stones WHERE id = ?", [id], (err, stone) => {
