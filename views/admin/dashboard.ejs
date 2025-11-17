@@ -99,8 +99,8 @@
                 <!-- Column 2: Bulk Upload -->
                 <div class="bg-white p-8 rounded-lg shadow-lg">
                     <h3 class="text-2xl font-bold mb-6">Bulk Upload from File</h3>
-                    <p class="text-gray-600 mb-4">Upload an Excel (.xlsx) or CSV (.csv) file.</p>
-                    <p class="text-sm text-gray-500 mb-6">Note: This uses "INSERT OR IGNORE". It will add new stones and skip any `stock_id` that already exists. It does **not** overwrite.</p>
+                    <p class="text-gray-600 mb-4">Upload an Excel (.xlsx) or CSV (.csv) file. Your file **must** have these exact columns:</p>
+                    <p class="text-sm text-gray-800 font-mono mb-6">stock_id, video_url, lab, certificate_number</p>
                     
                     <form action="/admin/upload-bulk" method="POST" enctype="multipart/form-data">
                         <div class="mb-4">
