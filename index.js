@@ -1,6 +1,7 @@
 // --- Import Libraries ---
 const express = require('express');
 const path = require('path');
+const fs = require('fs'); // For File System operations (deleting PDFs)
 const multer = require('multer');
 const xlsx = require('xlsx');
 const bcrypt = require('bcrypt');
@@ -27,6 +28,15 @@ app.set('views', path.join(__dirname, 'views'));
 // --- Middleware ---
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public')); // For future static files
+
+// --- NEW: Create 'uploads' folder and make it public ---
+const uploadDir = path.join(__dirname, 'public/uploads');
+if (!fs.existsSync(uploadDir)){
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+// This makes /uploads/123.pdf available to the public
+app.use('/uploads', express.static(uploadDir));
+// --- END NEW ---
 
 // --- Session Middleware (for Logins) ---
 app.use(
@@ -177,7 +187,7 @@ function getVideoEmbedHtml(video_url) {
     }
 }
 
-// --- NEW HELPER: Build Certificate URL ---
+// HELPER: Build Certificate URL (This is now the FALLBACK)
 function buildCertificateUrl(lab, certificate_number) {
     if (!lab || !certificate_number) {
         return null;
@@ -191,12 +201,8 @@ function buildCertificateUrl(lab, certificate_number) {
         return `https://www.igi.org/Verify-Your-Report/?r=${certificate_number}`;
     }
     
-    // Add more labs here if you want
-    // else if (labUpper === 'HRD') { ... }
-    
     return null; // Return null if lab is not recognized
 }
-// --- END NEW HELPER ---
 
 // HELPER: Automatic social media/referrer parser
 function parseReferrer(referrer) {
@@ -227,7 +233,7 @@ async function logClickAnalytics(clickId, ipAddress) {
         console.log(`Detected test IP (${ipAddress}). Simulating location.`);
         locationData = {
             country: 'United States',
-            country_code: 'US',
+            country_code: 'US', // <-- This will show the US flag
             city: 'Test Location',
             isp: 'Test ISP'
         };
@@ -274,8 +280,9 @@ async function logClickAnalytics(clickId, ipAddress) {
 // --- PUBLIC ROUTE ---
 // --- ================================== ---
 
-// GET /diamonds/:stockId - Public page (NOW CASE-INSENSITIVE & BUILDS CERT LINK)
+// GET /diamonds/:stockId - Public page (NOW WITH HYBRID CERTIFICATE LOGIC)
 app.get('/diamonds/:stockId', (req, res) => {
+    // --- CASE-INSENSITIVE FIX ---
     const stock_id_from_url = (req.params.stockId || '').toUpperCase();
     
     db.get("SELECT * FROM stones WHERE stock_id = ?", [stock_id_from_url], (err, row) => {
@@ -287,7 +294,7 @@ app.get('/diamonds/:stockId', (req, res) => {
             return res.status(404).render('404', { stock_id: req.params.stockId });
         }
         
-        // --- Analytics Tracking ---
+        // --- Full Analytics Tracking ---
         const ipAddress = req.ip; 
         const referrerString = req.get('Referrer') || 'Direct';
         const uaString = req.get('User-Agent');
@@ -299,7 +306,6 @@ app.get('/diamonds/:stockId', (req, res) => {
             medium: req.query.utm_medium || null,
             campaign: req.query.utm_campaign || null
         };
-        
         const sql = `INSERT INTO link_clicks (
                         stock_id, ip_address, 
                         social_source, referrer_domain, 
@@ -307,33 +313,44 @@ app.get('/diamonds/:stockId', (req, res) => {
                         utm_source, utm_medium, utm_campaign
                      ) 
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-        
         db.run(sql, [
             row.stock_id, ipAddress,
             referrerInfo.source, referrerInfo.domain,
             uaString, device.browser.name, device.os.name,
             utmParams.source, utmParams.medium, utmParams.campaign
         ], function(err) {
-            if (err) {
-                console.error("Error logging click:", err.message);
-            } else {
-                const clickId = this.lastID;
-                logClickAnalytics(clickId, ipAddress);
-            }
+            if (err) console.error("Error logging click:", err.message);
+            else logClickAnalytics(this.lastID, ipAddress);
         });
+        // --- END: Analytics Tracking ---
 
         const baseUrl = req.protocol + '://' + req.get('host');
         const publicUrl = `${baseUrl}/diamonds/${row.stock_id}`;
         const video_html = getVideoEmbedHtml(row.video_url);
 
-        // --- NEW: Build Certificate Link ---
-        const certificate_url = buildCertificateUrl(row.lab, row.certificate_number);
+        // --- ================================== ---
+        // --- NEW: HYBRID CERTIFICATE LOGIC ---
+        // --- ================================== ---
+        let cert_type = 'none';
+        let certificate_url_to_show = null;
+
+        if (row.certificate_pdf_path) {
+            // 1. PDF is uploaded! This is the "perfect" experience.
+            cert_type = 'pdf';
+            certificate_url_to_show = row.certificate_pdf_path; // e.g., /uploads/1234567.pdf
+        } else if (row.lab && row.certificate_number) {
+            // 2. No PDF. Fallback to building the link automatically.
+            cert_type = 'link';
+            certificate_url_to_show = buildCertificateUrl(row.lab, row.certificate_number);
+        }
+        // 3. If neither, both remain null/none.
         // --- END NEW ---
 
         res.render('diamond', {
             stock_id: row.stock_id,
             video_html: video_html,
-            certificate_url: certificate_url, // Pass the newly built URL
+            cert_type: cert_type, // Pass the type ('pdf', 'link', 'none')
+            certificate_url: certificate_url_to_show, // Pass the correct URL
             video_url: row.video_url,
             publicUrl: publicUrl
         });
@@ -389,11 +406,11 @@ app.get('/admin', isAuthenticated, (req, res) => {
     const showDisclaimer = req.query.login === 'true';
     res.render('admin/dashboard', { 
         message: null, 
-        showDisclaimer: showDisclaimer // Pass flag to template
+        showDisclaimer: showDisclaimer
     });
 });
 
-// GET /admin/manage - Manage Stones (NOW CASE-INSENSITIVE)
+// GET /admin/manage - Manage Stones
 app.get('/admin/manage', isAuthenticated, (req, res) => {
     const baseUrl = req.protocol + '://' + req.get('host');
     const searchQuery = req.query.search || '';
@@ -404,6 +421,12 @@ app.get('/admin/manage', isAuthenticated, (req, res) => {
     }
     if (req.query.error === 'delete_all_failed') {
         message = { type: 'error', text: 'An error occurred while deleting stones.' };
+    }
+    if (req.query.success === 'pdf_upload') {
+        message = { type: 'success', text: `Successfully matched ${req.query.matched} PDFs. Ignored ${req.query.unmatched} PDFs.` };
+    }
+    if (req.query.error === 'pdf_upload_failed') {
+        message = { type: 'error', text: 'PDF upload failed. Please check the file and try again.' };
     }
 
     let sql = "SELECT * FROM stones";
@@ -442,7 +465,7 @@ app.get('/admin/qr/:stockId', isAuthenticated, (req, res) => {
             if (err) return res.status(500).send("Error generating QR code");
             
             res.render('admin/qr_code', {
-                stock_id: stone.stock_id, // Use the correct-cased ID from DB
+                stock_id: stone.stock_id,
                 publicUrl: publicUrl,
                 baseUrl: baseUrl,
                 qrCodeDataUrl: qrCodeDataUrl
@@ -453,18 +476,14 @@ app.get('/admin/qr/:stockId', isAuthenticated, (req, res) => {
 
 // POST /admin/add-single (UPDATED for new DB structure)
 app.post('/admin/add-single', isAuthenticated, canAdd, (req, res) => {
-    // --- UPDATED ---
     const stock_id = (req.body.stock_id || '').trim().toUpperCase();
     const { video_url, lab, certificate_number } = req.body;
-    // --- END UPDATED ---
     
     if (!stock_id) {
         return res.render('admin/dashboard', { message: { type: 'error', text: 'Stock ID is required.' }, showDisclaimer: false });
     }
-    // --- UPDATED ---
-    const sql = "INSERT OR IGNORE INTO stones (stock_id, video_url, lab, certificate_number) VALUES (?, ?, ?, ?)";
-    db.run(sql, [stock_id, video_url, lab, certificate_number], function(err) {
-    // --- END UPDATED ---
+    const sql = "INSERT OR IGNORE INTO stones (stock_id, video_url, lab, certificate_number, certificate_pdf_path) VALUES (?, ?, ?, ?, NULL)";
+    db.run(sql, [stock_id, video_url, lab, (certificate_number || null)], function(err) {
         if (err) return res.render('admin/dashboard', { message: { type: 'error', text: 'Database error.' }, showDisclaimer: false });
         if (this.changes === 0) {
             return res.render('admin/dashboard', { message: { type: 'error', text: `Stock ID '${stock_id}' already exists.` }, showDisclaimer: false });
@@ -475,8 +494,8 @@ app.post('/admin/add-single', isAuthenticated, canAdd, (req, res) => {
 });
 
 // POST /admin/upload-bulk (UPDATED for new DB structure)
-const upload = multer({ storage: multer.memoryStorage() });
-app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFile'), (req, res) => {
+const excelUpload = multer({ storage: multer.memoryStorage() }); // For Excel
+app.post('/admin/upload-bulk', isAuthenticated, canAdd, excelUpload.single('diamondFile'), (req, res) => {
     if (!req.file) {
         return res.render('admin/dashboard', { message: { type: 'error', text: 'No file uploaded.' }, showDisclaimer: false });
     }
@@ -486,9 +505,7 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFi
         const sheet = workbook.Sheets[sheetName];
         const jsonData = xlsx.utils.sheet_to_json(sheet);
         
-        // --- UPDATED ---
-        const sql = "INSERT OR IGNORE INTO stones (stock_id, video_url, lab, certificate_number) VALUES (?, ?, ?, ?)";
-        // --- END UPDATED ---
+        const sql = "INSERT OR IGNORE INTO stones (stock_id, video_url, lab, certificate_number, certificate_pdf_path) VALUES (?, ?, ?, ?, NULL)";
         
         let stonesAdded = 0;
         let stonesIgnored = 0;
@@ -497,14 +514,11 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFi
             for (const row of jsonData) {
                 const stock_id = String(row.stock_id || '').trim().toUpperCase();
                 if (stock_id) {
-                    // --- UPDATED ---
-                    // Read the new columns from Excel
-                    stmt.run(stock_id, row.video_url, row.lab, row.certificate_number, function(err) {
+                    stmt.run(stock_id, row.video_url, row.lab, (row.certificate_number || null), function(err) {
                         if (err) console.error("Error inserting row:", err.message);
                         else if (this.changes > 0) stonesAdded++;
                         else stonesIgnored++;
                     });
-                    // --- END UPDATED ---
                 }
             }
             stmt.finalize((err) => {
@@ -517,6 +531,119 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFi
     } catch (error) {
         console.error(error);
         res.render('admin/dashboard', { message: { type: 'error', text: 'Invalid file format. Please use .xlsx or .csv' }, showDisclaimer: false });
+    }
+});
+
+// --- NEW: SMART PDF BULK UPLOADER ---
+const pdfStorage = multer.diskStorage({
+    destination: uploadDir,
+    filename: (req, file, cb) => {
+        // We MUST sanitize the filename
+        const originalName = file.originalname;
+        const sanitizedName = originalName.replace(/[^a-zA-Z0-9.\-]/g, '_'); // Replace weird characters
+        cb(null, sanitizedName);
+    }
+});
+const pdfUpload = multer({ 
+    storage: pdfStorage,
+    fileFilter: (req, file, cb) => {
+        if (path.extname(file.originalname).toLowerCase() !== '.pdf') {
+            return cb(new Error('Only .pdf files are allowed'), false);
+        }
+        cb(null, true);
+    }
+});
+
+// The new route, accepts an array of files
+app.post('/admin/upload-pdf', isAuthenticated, canAdd, pdfUpload.array('pdfFiles'), (req, res) => {
+    if (!req.files || req.files.length === 0) {
+        return res.redirect('/admin/manage');
+    }
+
+    let filesMatched = 0;
+    let filesUnmatched = 0;
+    const promises = [];
+    const sql = "UPDATE stones SET certificate_pdf_path = ? WHERE certificate_number = ?";
+
+    for (const file of req.files) {
+        // Get '1234567' from '1234567.pdf'
+        const certNumber = path.basename(file.filename, '.pdf');
+        const pdfPath = `/uploads/${file.filename}`; // The public URL path
+
+        const promise = new Promise((resolve, reject) => {
+            db.run(sql, [pdfPath, certNumber], function(err) {
+                if (err) {
+                    console.error("Error matching PDF:", err.message);
+                    return reject(err);
+                }
+                if (this.changes > 0) {
+                    filesMatched++;
+                } else {
+                    filesUnmatched++;
+                    // Delete the unmatched file
+                    fs.unlink(file.path, (err) => { if (err) console.error("Error deleting unmatched PDF:", err); });
+                }
+                resolve();
+            });
+        });
+        promises.push(promise);
+    }
+
+    Promise.all(promises)
+        .then(() => {
+            logAction(req.user, 'UPLOAD_PDF', `Matched ${filesMatched} PDFs, Unmatched/Deleted ${filesUnmatched}.`);
+            res.redirect(`/admin/manage?success=pdf_upload&matched=${filesMatched}&unmatched=${filesUnmatched}`);
+        })
+        .catch((err) => {
+            console.error("PDF Upload batch failed", err);
+            res.redirect('/admin/manage?error=pdf_upload_failed');
+        });
+});
+// --- END: SMART PDF UPLOADER ---
+
+
+// --- NEW: LINK GENERATOR ROUTE (Protected by canAdd) ---
+const linkGenUpload = multer({ storage: multer.memoryStorage() }); // Separate multer instance
+app.post('/admin/generate-links', isAuthenticated, canAdd, linkGenUpload.single('stockFile'), (req, res) => {
+    if (!req.file) {
+        return res.redirect('/admin/manage?error=link_gen_failed');
+    }
+    try {
+        const workbook = xlsx.read(req.file.buffer, { type: "buffer" });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const jsonData = xlsx.utils.sheet_to_json(sheet);
+        
+        const baseUrl = req.protocol + '://' + req.get('host');
+        let outputData = [];
+
+        for (const row of jsonData) {
+            const firstKey = Object.keys(row)[0];
+            if (firstKey) {
+                const stock_id = String(row[firstKey] || '').trim().toUpperCase();
+                if (stock_id) {
+                    outputData.push({
+                        stock_id: stock_id,
+                        public_link: `${baseUrl}/diamonds/${stock_id}`
+                    });
+                }
+            }
+        }
+        
+        const newSheet = xlsx.utils.json_to_sheet(outputData);
+        const newWorkbook = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(newWorkbook, newSheet, 'Generated Links');
+        
+        const buffer = xlsx.write(newWorkbook, { type: 'buffer', bookType: 'xlsx' });
+        logAction(req.user, 'GENERATE_LINKS', `Generated ${outputData.length} stock links.`);
+        
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename=generated_links.xlsx');
+        res.send(buffer);
+
+    } catch (error) {
+        console.error(error);
+        res.redirect('/admin/manage?error=generation_failed');
     }
 });
 
@@ -533,10 +660,8 @@ app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, (req, res) => {
 
 // POST /admin/update-stone (UPDATED for new DB structure)
 app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
-    // --- UPDATED ---
     const { id, video_url, lab, certificate_number } = req.body;
     const stock_id = (req.body.stock_id || '').trim().toUpperCase();
-    // --- END UPDATED ---
 
     if (!stock_id) {
         db.get("SELECT * FROM stones WHERE id = ?", [id], (err, stone) => {
@@ -548,7 +673,6 @@ app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
         return;
     }
 
-    // --- UPDATED ---
     const sql = `UPDATE stones SET 
                     stock_id = ?,
                     video_url = ?,
@@ -557,7 +681,6 @@ app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
                  WHERE id = ?`;
     
     db.run(sql, [stock_id, video_url, lab, certificate_number, id], function(err) {
-    // --- END UPDATED ---
         if (err) {
             if (err.code === 'SQLITE_CONSTRAINT') {
                 db.get("SELECT * FROM stones WHERE id = ?", [id], (err_fetch, stone) => {
@@ -577,25 +700,58 @@ app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
     });
 });
 
-// POST /admin/delete-stone (Protected by canDelete)
+// POST /admin/delete-stone (UPDATED to delete PDF)
 app.post('/admin/delete-stone', isAuthenticated, canDelete, (req, res) => {
     const { id, stock_id } = req.body;
-    db.run("DELETE FROM stones WHERE id = ?", [id], (err) => {
+
+    // 1. Find the stone to get its PDF path
+    db.get("SELECT certificate_pdf_path FROM stones WHERE id = ?", [id], (err, stone) => {
         if (err) console.error(err);
-        else logAction(req.user, 'DELETE_STONE', `Deleted stone: ${stock_id} (ID: ${id})`);
-        res.redirect('/admin/manage');
+        if (stone && stone.certificate_pdf_path) {
+            // 2. Delete the PDF file from disk
+            const pdfPath = path.join(__dirname, 'public', stone.certificate_pdf_path);
+            fs.unlink(pdfPath, (unlinkErr) => {
+                if (unlinkErr && unlinkErr.code !== 'ENOENT') { // Don't error if file already gone
+                    console.error("Error deleting PDF file:", unlinkErr);
+                } else {
+                    console.log(`Deleted PDF: ${pdfPath}`);
+                }
+            });
+        }
+        
+        // 3. Delete the stone from database
+        db.run("DELETE FROM stones WHERE id = ?", [id], (err) => {
+            if (err) console.error(err);
+            else logAction(req.user, 'DELETE_STONE', `Deleted stone: ${stock_id} (ID: ${id})`);
+            res.redirect('/admin/manage');
+        });
     });
 });
 
-// POST /admin/delete-all-stones (Protected by isSuperAdmin)
+// POST /admin/delete-all-stones (UPDATED to delete all PDFs)
 app.post('/admin/delete-all-stones', isAuthenticated, isSuperAdmin, (req, res) => {
+    // 1. Delete all rows from 'stones' table
     db.run("DELETE FROM stones", [], (err) => {
         if (err) {
             console.error(err);
             logAction(req.user, 'DELETE_ALL_STONES_FAIL', `Error: ${err.message}`);
             return res.redirect('/admin/manage?error=delete_all_failed');
         }
+        
         logAction(req.user, 'DELETE_ALL_STONES', 'User successfully deleted all stones.');
+        
+        // 2. Clear out the /uploads directory
+        fs.readdir(uploadDir, (err, files) => {
+            if (err) return console.error("Could not read uploads dir:", err);
+            for (const file of files) {
+                if (file === '.gitkeep') continue; // Don't delete .gitkeep
+                fs.unlink(path.join(uploadDir, file), unlinkErr => {
+                    if (unlinkErr) console.error("Error deleting a PDF:", unlinkErr);
+                });
+            }
+            console.log(`Cleared ${files.length} PDFs from uploads.`);
+        });
+
         res.redirect('/admin/manage?success=delete_all_success');
     });
 });
