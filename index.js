@@ -253,19 +253,23 @@ async function logClickAnalytics(clickId, ipAddress) {
 // --- PUBLIC ROUTE ---
 // --- ================================== ---
 
-// GET /diamonds/:stockId - Public page (NOW WITH POWERFUL TRACKING)
+// GET /diamonds/:stockId - Public page (NOW CASE-INSENSITIVE)
 app.get('/diamonds/:stockId', (req, res) => {
-    const stock_id = req.params.stockId;
+    // --- CASE-INSENSITIVE FIX ---
+    const stock_id_from_url = (req.params.stockId || '').toUpperCase();
+    // --- END FIX ---
     
-    db.get("SELECT * FROM stones WHERE stock_id = ?", [stock_id], (err, row) => {
+    db.get("SELECT * FROM stones WHERE stock_id = ?", [stock_id_from_url], (err, row) => {
         if (err) {
             console.error(err);
             return res.status(500).send("Server error");
         }
         if (!row) {
-            return res.status(404).render('404', { stock_id: stock_id });
+            // Show the 404 page, but display the ID as the user typed it
+            return res.status(404).render('404', { stock_id: req.params.stockId });
         }
         
+        // --- Analytics Tracking ---
         const ipAddress = req.ip; 
         const referrerString = req.get('Referrer') || 'Direct';
         const uaString = req.get('User-Agent');
@@ -287,7 +291,8 @@ app.get('/diamonds/:stockId', (req, res) => {
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         
         db.run(sql, [
-            stock_id, ipAddress,
+            row.stock_id, // Log the *correct* uppercase ID
+            ipAddress,
             referrerInfo.source, referrerInfo.domain,
             uaString, device.browser.name, device.os.name,
             utmParams.source, utmParams.medium, utmParams.campaign
@@ -334,7 +339,7 @@ app.post('/login', (req, res) => {
         if (match) {
             req.session.user = { id: user.id, username: user.username };
             logAction(req.session.user, 'LOGIN', 'User logged in.');
-            res.redirect('/admin?login=true'); // <-- Redirect with login=true flag
+            res.redirect('/admin?login=true'); // Redirect with login=true flag
         } else {
             return res.render('login', { message: { type: 'error', text: 'Invalid username or password.' } });
         }
@@ -367,12 +372,11 @@ app.get('/admin', isAuthenticated, (req, res) => {
     });
 });
 
-// GET /admin/manage - Manage Stones
+// GET /admin/manage - Manage Stones (NOW CASE-INSENSITIVE)
 app.get('/admin/manage', isAuthenticated, (req, res) => {
     const baseUrl = req.protocol + '://' + req.get('host');
     const searchQuery = req.query.search || '';
     
-    // Check for success/error messages from delete all
     let message = null;
     if (req.query.success === 'delete_all_success') {
         message = { type: 'success', text: 'All stones have been successfully deleted.' };
@@ -384,9 +388,16 @@ app.get('/admin/manage', isAuthenticated, (req, res) => {
     let sql = "SELECT * FROM stones";
     let params = [];
     if (searchQuery) {
-        const searchTerms = searchQuery.split(',').map(term => term.trim()).filter(term => term.length > 0);
+        // --- CASE-INSENSITIVE FIX ---
+        // Split, trim, and convert all search terms to UPPERCASE
+        const searchTerms = searchQuery.split(',')
+                                     .map(term => term.trim().toUpperCase())
+                                     .filter(term => term.length > 0);
+        // --- END FIX ---
+                                     
         if (searchTerms.length > 0) {
             const placeholders = searchTerms.map(() => '?').join(',');
+            // No need for UPPER() in SQL, since data is already uppercase
             sql += ` WHERE stock_id IN (${placeholders})`;
             params = searchTerms;
         }
@@ -397,7 +408,7 @@ app.get('/admin/manage', isAuthenticated, (req, res) => {
         if (err) return res.status(500).send("Server error");
         res.render('admin/manage', { 
             stones: stones, 
-            message: message, // Pass the message
+            message: message,
             baseUrl: baseUrl,
             searchQuery: searchQuery
         });
@@ -406,18 +417,19 @@ app.get('/admin/manage', isAuthenticated, (req, res) => {
 
 // GET /admin/qr/:stockId
 app.get('/admin/qr/:stockId', isAuthenticated, (req, res) => {
-    const stock_id = req.params.stockId;
+    // --- CASE-INSENSITIVE FIX ---
+    const stock_id_from_url = (req.params.stockId || '').toUpperCase();
     const baseUrl = req.protocol + '://' + req.get('host');
-    const publicUrl = `${baseUrl}/diamonds/${stock_id}?utm_source=qrcode&utm_medium=print`;
+    const publicUrl = `${baseUrl}/diamonds/${stock_id_from_url}?utm_source=qrcode&utm_medium=print`;
 
-    db.get("SELECT * FROM stones WHERE stock_id = ?", [stock_id], (err, stone) => {
+    db.get("SELECT * FROM stones WHERE stock_id = ?", [stock_id_from_url], (err, stone) => {
         if (err || !stone) return res.status(404).send("Stone not found");
 
         QRCode.toDataURL(publicUrl, { width: 300, margin: 2 }, (err, qrCodeDataUrl) => {
             if (err) return res.status(500).send("Error generating QR code");
             
             res.render('admin/qr_code', {
-                stock_id: stock_id,
+                stock_id: stone.stock_id, // Use the correct-cased ID from DB
                 publicUrl: publicUrl,
                 baseUrl: baseUrl,
                 qrCodeDataUrl: qrCodeDataUrl
@@ -426,9 +438,13 @@ app.get('/admin/qr/:stockId', isAuthenticated, (req, res) => {
     });
 });
 
-// POST /admin/add-single (Protected by canAdd)
+// POST /admin/add-single (NOW CASE-INSENSITIVE)
 app.post('/admin/add-single', isAuthenticated, canAdd, (req, res) => {
-    const { stock_id, video_url, certificate_url } = req.body;
+    // --- CASE-INSENSITIVE FIX ---
+    const stock_id = (req.body.stock_id || '').trim().toUpperCase();
+    // --- END FIX ---
+    const { video_url, certificate_url } = req.body;
+    
     if (!stock_id) {
         return res.render('admin/dashboard', { message: { type: 'error', text: 'Stock ID is required.' }, showDisclaimer: false });
     }
@@ -443,7 +459,7 @@ app.post('/admin/add-single', isAuthenticated, canAdd, (req, res) => {
     });
 });
 
-// POST /admin/upload-bulk (Protected by canAdd)
+// POST /admin/upload-bulk (NOW CASE-INSENSITIVE)
 const upload = multer({ storage: multer.memoryStorage() });
 app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFile'), (req, res) => {
     if (!req.file) {
@@ -460,7 +476,9 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFi
         db.serialize(() => {
             const stmt = db.prepare(sql);
             for (const row of jsonData) {
-                const stock_id = String(row.stock_id || '').trim();
+                // --- CASE-INSENSITIVE FIX ---
+                const stock_id = String(row.stock_id || '').trim().toUpperCase();
+                // --- END FIX ---
                 if (stock_id) {
                     stmt.run(stock_id, row.video_url, row.certificate_url, function() {
                         if (this.changes > 0) stonesAdded++;
@@ -481,6 +499,61 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, upload.single('diamondFi
     }
 });
 
+// --- NEW: LINK GENERATOR ROUTE (Protected by canAdd) ---
+app.post('/admin/generate-links', isAuthenticated, canAdd, upload.single('stockFile'), (req, res) => {
+    if (!req.file) {
+        // This is a bit awkward, we're just redirecting.
+        // A full solution would use JS on the frontend to show the error.
+        return res.redirect('/admin/manage'); 
+    }
+    try {
+        const workbook = xlsx.read(req.file.buffer, { type: "buffer" });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const jsonData = xlsx.utils.sheet_to_json(sheet);
+        
+        const baseUrl = req.protocol + '://' + req.get('host');
+        let outputData = [];
+
+        // Read the 'stock_id' from the first column of the uploaded file
+        for (const row of jsonData) {
+            // Find the first key in the row (e.g., 'stock_id' or 'My Stock ID Column')
+            const firstKey = Object.keys(row)[0];
+            if (firstKey) {
+                const stock_id = String(row[firstKey] || '').trim().toUpperCase();
+                if (stock_id) {
+                    outputData.push({
+                        stock_id: stock_id,
+                        public_link: `${baseUrl}/diamonds/${stock_id}`
+                    });
+                }
+            }
+        }
+        
+        // Create a new Excel file in memory
+        const newSheet = xlsx.utils.json_to_sheet(outputData);
+        const newWorkbook = xlsx.utils.book_new();
+        xlsx.utils.book_append_sheet(newWorkbook, newSheet, 'Generated Links');
+        
+        // Write the file to a buffer
+        const buffer = xlsx.write(newWorkbook, { type: 'buffer', bookType: 'xlsx' });
+
+        // Log this action
+        logAction(req.user, 'GENERATE_LINKS', `Generated ${outputData.length} stock links.`);
+        
+        // Send the file as a download
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename=generated_links.xlsx');
+        res.send(buffer);
+
+    } catch (error) {
+        console.error(error);
+        res.redirect('/admin/manage?error=generation_failed');
+    }
+});
+// --- END: LINK GENERATOR ROUTE ---
+
+
 // GET /admin/edit-stone/:id (Protected by canAdd)
 app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, (req, res) => {
     const stoneIdToEdit = req.params.id;
@@ -492,9 +565,12 @@ app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, (req, res) => {
     });
 });
 
-// POST /admin/update-stone (Protected by canAdd)
+// POST /admin/update-stone (NOW CASE-INSENSITIVE)
 app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
-    const { id, stock_id, video_url, certificate_url } = req.body;
+    // --- CASE-INSENSITIVE FIX ---
+    const stock_id = (req.body.stock_id || '').trim().toUpperCase();
+    // --- END FIX ---
+    const { id, video_url, certificate_url } = req.body;
 
     if (!stock_id) {
         db.get("SELECT * FROM stones WHERE id = ?", [id], (err, stone) => {
@@ -542,7 +618,7 @@ app.post('/admin/delete-stone', isAuthenticated, canDelete, (req, res) => {
     });
 });
 
-// --- NEW: DELETE ALL STONES ROUTE (Protected by isSuperAdmin) ---
+// POST /admin/delete-all-stones (Protected by isSuperAdmin)
 app.post('/admin/delete-all-stones', isAuthenticated, isSuperAdmin, (req, res) => {
     db.run("DELETE FROM stones", [], (err) => {
         if (err) {
@@ -554,7 +630,6 @@ app.post('/admin/delete-all-stones', isAuthenticated, isSuperAdmin, (req, res) =
         res.redirect('/admin/manage?success=delete_all_success');
     });
 });
-// --- END: DELETE ALL STONES ROUTE ---
 
 // --- UPDATED USER MANAGEMENT (Protected by isSuperAdmin) ---
 
