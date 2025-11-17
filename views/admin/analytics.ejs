@@ -125,16 +125,18 @@
                                 <a href="/diamonds/<%= click.stock_id %>" target="_blank" class="text-blue-600 hover:underline"><%= click.stock_id %></a>
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                <!-- NEW: Show Country Flag -->
+                                <!-- FLAG FIX: Show Country Flag -->
                                 <div class="flex items-center">
                                     <% if (click.country_code) { %>
-                                        <!-- Using a free flag CDN. This will now work. -->
-                                        <img src="https" alt="<%= click.country_code %>" class="h-4 w-6 inline-block mr-2 border border-gray-300">
+                                        <!-- 
+                                          THIS IS THE FIX:
+                                          It was missing '.toLowerCase()'
+                                        -->
+                                        <img src="https://flagcdn.com/w20/<%= click.country_code.toLowerCase() %>.png" alt="<%= click.country_code %>" class="h-4 w-6 inline-block mr-2 border border-gray-300">
                                     <% } else if (click.country) { %>
                                         <span class="w-6 h-4 mr-2 inline-block"></span> <!-- Placeholder for alignment -->
                                     <% } %>
                                     <span>
-                                        <!-- THIS IS THE FIX: Show country/city or '...' if null -->
                                         <%= click.city || '...' %>, <%= click.country || '...' %>
                                     </span>
                                 </div>
@@ -177,7 +179,7 @@
                 </tbody>
             </table>
 
-            <!-- NEW: Pagination -->
+            <!-- Pagination -->
             <div class="mt-6 flex items-center justify-between">
                 <p class="text-sm text-gray-700">
                     Page <%= currentPage %> of <%= totalPages %>
