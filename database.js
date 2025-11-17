@@ -25,7 +25,7 @@ function initDb() {
             )
         `, (err) => {
             if (err) return console.error("Error creating users table:", err.message);
-
+            
             db.get("SELECT * FROM users WHERE username = ?", ['admin'], (err, row) => {
                 if (err) return console.error("Error checking for admin user:", err.message);
                 if (!row) {
@@ -36,21 +36,24 @@ function initDb() {
             });
         });
 
-        // --- Stones table (no changes) ---
+        // --- UPDATED: Stones table ---
+        // We are REPLACING certificate_url with lab and certificate_number
         db.run(`
             CREATE TABLE IF NOT EXISTS stones (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 stock_id TEXT UNIQUE NOT NULL,
                 video_url TEXT,
-                certificate_url TEXT
+                lab TEXT,
+                certificate_number TEXT
             )
         `, (err) => {
             if (err) {
                 console.error("Error creating stones table:", err.message);
             }
         });
+        // --- END UPDATED ---
 
-        // --- History Log Table (no changes) ---
+        // --- History Log Table ---
         db.run(`
             CREATE TABLE IF NOT EXISTS history_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,34 +69,22 @@ function initDb() {
             }
         });
 
-        // --- ================================== ---
-        // --- UPDATED: Analytics Table ---
-        // --- ================================== ---
-        // We are adding new columns for powerful analytics!
+        // --- Analytics Table ---
         db.run(`
             CREATE TABLE IF NOT EXISTS link_clicks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 stock_id TEXT NOT NULL,
                 ip_address TEXT,
-
-                -- NEW: Automatic Source Detection --
-                social_source TEXT,  -- e.g., "Facebook", "Google", "Direct"
-                referrer_domain TEXT, -- e.g., "facebook.com", "google.com"
-
+                social_source TEXT,
+                referrer_domain TEXT,
                 user_agent TEXT(1024),
-
-                -- Location Data --
                 country TEXT,
                 country_code TEXT,
                 city TEXT,
                 isp TEXT,
-
-                -- Device Data (from ua-parser-js) --
                 browser TEXT,
                 os TEXT,
-
-                -- Marketing Data (for WhatsApp, QR, etc.) --
                 utm_source TEXT,
                 utm_medium TEXT,
                 utm_campaign TEXT
@@ -103,7 +94,6 @@ function initDb() {
                 console.error("Error creating link_clicks table:", err.message);
             }
         });
-        // --- END UPDATED ---
     });
 }
 
