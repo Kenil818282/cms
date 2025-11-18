@@ -1,23 +1,55 @@
-// --- Import Libraries ---
+// Import the sqlite3 library
 const { Pool } = require('pg'); // Use the 'pg' library for
 const dotenv = require('dotenv');
-const bcrypt = require('bcrypt');
+const path = require('path');
+const fs = require('fs');
 
-// --- Load Environment Variables ---
-// This reads the .env file OR your Render Environment Variables
+// Load Environment Variables
 dotenv.config();
 
-// --- Create Database Connection Pool ---
-// It automatically uses the 'DATABASE_URL' variable we set in Render
+// --- NEW: Define a persistent data directory ---
+// This path is for a Render.com persistent disk
+const dataDir = process.env.DATA_DIR || '/var/data'; 
+// Ensure this directory exists
+if (!fs.existsSync(dataDir)) {
+    // If we're not on Render, use a local folder
+    try {
+        fs.mkdirSync(dataDir, { recursive: true });
+    } catch (e) {
+        // If it fails (like on Replit), fall back to a local dir
+        console.warn(`Warning: Could not create ${dataDir}. Falling back to local './data' directory.`);
+        const localDataDir = path.join(__dirname, 'data');
+        if (!fs.existsSync(localDataDir)) {
+            fs.mkdirSync(localDataDir, { recursive: true });
+        }
+        module.exports.dataDir = localDataDir;
+    }
+}
+// This makes the final data directory path available to index.js
+const finalDataDir = fs.existsSync(dataDir) ? dataDir : path.join(__dirname, 'data');
+module.exports.dataDir = finalDataDir;
+
+const dbPath = path.join(finalDataDir, 'diamonds.db');
+console.log(`Database path set to: ${dbPath}`);
+// --- END NEW ---
+
+// --- THIS IS THE ECONNREFUSED FIX ---
+let connectionString = process.env.DATABASE_URL;
+if (connectionString && !connectionString.includes('sslmode=require')) {
+    connectionString += '?sslmode=require';
+    console.log("Adding ?sslmode=require to DATABASE_URL.");
+}
+// --- END FIX ---
+
+// Create Database Connection Pool
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: connectionString, // Use the fixed connection string
     ssl: {
         rejectUnauthorized: false // Required for Neon
     }
 });
 
 // --- Initialize Database ---
-// This function runs the SQL commands to create your tables if they don't exist
 async function initDb() {
     try {
         // Create the users table (with PostgreSQL syntax)
@@ -101,8 +133,11 @@ async function initDb() {
 
     } catch (err) {
         console.error("Error initializing database:", err.stack);
+        // This will now show the real connection error in your logs
+        process.exit(1); // Exit if DB init fails
     }
 }
 
 // Export the pool (for index.js to use) and the init function
-module.exports = { pool, initDb };
+module.exports.pool = pool;
+module.exports.initDb = initDb;
