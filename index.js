@@ -2,7 +2,7 @@
 require('dotenv').config(); // Load environment variables FIRST
 const express = require('express');
 const path = require('path');
-const fs = require('fs'); // For reading temp files
+const fs = require('fs'); // For File System operations
 const multer = require('multer');
 const xlsx = require('xlsx');
 const bcrypt = require('bcrypt');
@@ -11,14 +11,12 @@ const pgSession = require('connect-pg-simple')(session); // Postgres session sto
 const QRCode = require('qrcode');
 const fetch = require('node-fetch'); // For API calls
 const UAParser = require('ua-parser-js'); // For Browser/OS detection
-const cloudinary = require('cloudinary').v2; // Cloudinary for PDF uploads
 
 // --- Database Setup ---
 const { pool, initDb } = require('./database.js'); // Import Postgres pool
-initDb(); // <-- Call it here to set up tables
+// --- DO NOT CALL initDb() here ---
 
 // --- Cloudinary Setup ---
-// These are read from your Render Environment Variables
 cloudinary.config({ 
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME, 
   api_key: process.env.CLOUDINARY_API_KEY, 
@@ -38,6 +36,14 @@ app.set('views', path.join(__dirname, 'views'));
 // --- Middleware ---
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public')); // For future static files
+
+// --- Create 'uploads' folder (This is now for temp files only) ---
+const localUploadDir = path.join(__dirname, 'temp_uploads');
+if (!fs.existsSync(localUploadDir)){
+    fs.mkdirSync(localUploadDir, { recursive: true });
+}
+// We don't make this public, Cloudinary will host
+// --- END NEW ---
 
 // --- Session Middleware (NOW FOR POSTGRES) ---
 app.use(
@@ -606,19 +612,18 @@ app.post('/admin/upload-pdf', isAuthenticated, canAdd, pdfUpload.array('pdfFiles
                         } else {
                             filesUnmatched++;
                             // If no match, delete the file we just uploaded
-                            await cloudinary.uploader.destroy(result.public_id, { resource_type: 'raw' });
+                            await cloudinary.uploader.destroy(`certificates/${certNumber}`, { resource_type: 'raw' });
                         }
                         resolve();
                     } catch (dbError) {
                         console.error("DB update error after PDF upload:", dbError);
                         filesUnmatched++;
                         // Try to delete the orphaned file
-                        await cloudinary.uploader.destroy(result.public_id, { resource_type: 'raw' });
+                        await cloudinary.uploader.destroy(`certificates/${certNumber}`, { resource_type: 'raw' });
                         reject(dbError);
                     }
                 }
             );
-            // Send the file buffer to Cloudinary
             uploadStream.end(file.buffer);
         });
     });
@@ -691,7 +696,7 @@ app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, async (req, res) => {
         }
         res.render('admin/edit_stone', { stone: result.rows[0], message: null });
     } catch (err) {
-        console.error("Error fetching stone to edit:", err.stack);
+        console.error("Error fetching stone for edit:", err.stack);
         return res.redirect('/admin/manage');
     }
 });
@@ -701,31 +706,36 @@ app.post('/admin/update-stone', isAuthenticated, canAdd, async (req, res) => {
     const { id, video_url, lab, certificate_number } = req.body;
     const stock_id = (req.body.stock_id || '').trim().toUpperCase();
 
-    if (!stock_id) {
-        const result = await pool.query("SELECT * FROM stones WHERE id = $1", [id]);
-        return res.render('admin/edit_stone', { 
-            stone: result.rows[0], 
-            message: { type: 'error', text: 'Stock ID cannot be empty.' }
-        });
-    }
-
-    const sql = `UPDATE stones SET 
-                    stock_id = $1,
-                    video_url = $2,
-                    lab = $3,
-                    certificate_number = $4
-                 WHERE id = $5`;
-    
+    let stone;
     try {
+        // Get the current stone data in case we need to re-render
+        const stoneResult = await pool.query("SELECT * FROM stones WHERE id = $1", [id]);
+        stone = stoneResult.rows[0];
+
+        if (!stock_id) {
+            return res.render('admin/edit_stone', { 
+                stone: stone, 
+                message: { type: 'error', text: 'Stock ID cannot be empty.' }
+            });
+        }
+
+        const sql = `UPDATE stones SET 
+                        stock_id = $1,
+                        video_url = $2,
+                        lab = $3,
+                        certificate_number = $4
+                     WHERE id = $5`;
+        
         await pool.query(sql, [stock_id, video_url, lab, certificate_number, id]);
+        
         logAction(req.user, 'EDIT_STONE', `Updated stone: ${stock_id} (ID: ${id})`);
         res.redirect('/admin/manage');
+
     } catch (err) {
         // Check for UNIQUE constraint error (code '23505' in Postgres)
         if (err.code === '23505') {
-            const result = await pool.query("SELECT * FROM stones WHERE id = $1", [id]);
             return res.render('admin/edit_stone', { 
-                stone: result.rows[0], 
+                stone: stone, 
                 message: { type: 'error', text: `Error: Stock ID '${stock_id}' already exists.` }
             });
         }
@@ -745,12 +755,11 @@ app.post('/admin/delete-pdf', isAuthenticated, canAdd, async (req, res) => {
 
         if (stone && stone.certificate_pdf_url) {
             // 2. Delete the PDF from Cloudinary
-            // Extract the public_id from the URL
             const urlParts = stone.certificate_pdf_url.split('/');
             const public_id_with_ext = urlParts.slice(urlParts.indexOf('certificates')).join('/');
-            const public_id = path.parse(public_id_with_ext).name;
+            const public_id = `certificates/${path.parse(public_id_with_ext).name}`;
             
-            await cloudinary.uploader.destroy(`certificates/${public_id}`, { resource_type: 'raw' });
+            await cloudinary.uploader.destroy(public_id, { resource_type: 'raw' });
             
             // 3. Set the PDF path to NULL in the database
             await pool.query("UPDATE stones SET certificate_pdf_url = NULL WHERE id = $1", [id]);
@@ -787,9 +796,9 @@ app.post('/admin/delete-stone', isAuthenticated, canDelete, async (req, res) => 
             const url = result.rows[0].certificate_pdf_url;
             const urlParts = url.split('/');
             const public_id_with_ext = urlParts.slice(urlParts.indexOf('certificates')).join('/');
-            const public_id = path.parse(public_id_with_ext).name;
+            const public_id = `certificates/${path.parse(public_id_with_ext).name}`;
             
-            await cloudinary.uploader.destroy(`certificates/${public_id}`, { resource_type: 'raw' });
+            await cloudinary.uploader.destroy(public_id, { resource_type: 'raw' });
         }
         
         // 3. Delete the stone from database
@@ -814,8 +823,8 @@ app.post('/admin/delete-all-stones', isAuthenticated, isSuperAdmin, async (req, 
             const public_ids = result.rows.map(row => {
                 const urlParts = row.certificate_pdf_url.split('/');
                 const public_id_with_ext = urlParts.slice(urlParts.indexOf('certificates')).join('/');
-                return path.parse(public_id_with_ext).name;
-            }).map(id => `certificates/${id}`); // Add the folder
+                return `certificates/${path.parse(public_id_with_ext).name}`;
+            });
 
             // 3. Delete all files from Cloudinary in one batch
             await cloudinary.api.delete_resources(public_ids, { resource_type: 'raw' });
@@ -856,8 +865,7 @@ app.post('/admin/add-user', isAuthenticated, isSuperAdmin, async (req, res) => {
     
     let users = [];
     try {
-        const usersResult = await pool.query("SELECT * FROM users");
-        users = usersResult.rows;
+        users = (await pool.query("SELECT * FROM users")).rows;
 
         if (!username || !password) {
              return res.render('admin/users', { users: users, message: {type: 'error', text: 'Username and password are required.'} });
@@ -1130,7 +1138,13 @@ app.get('/', (req, res) => {
 });
 
 // --- Start Server ---
+// --- THIS IS THE FIX ---
+// We start the server *first*, then initialize the database.
+// This prevents the app from crashing if Neon is "asleep".
 app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port} or on port ${port}`);
+    console.log(`Server running on port ${port}`);
     console.log(`Admin Login: /login`);
+    
+    // NOW, initialize the database
+    initDb().catch(console.error);
 });
