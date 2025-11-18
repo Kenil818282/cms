@@ -1,25 +1,35 @@
 // --- Import Libraries ---
+require('dotenv').config(); // Load environment variables FIRST
 const express = require('express');
 const path = require('path');
-const fs = require('fs'); // For File System operations
+const fs = require('fs'); // For reading temp files
 const multer = require('multer');
 const xlsx = require('xlsx');
 const bcrypt = require('bcrypt');
 const session = require('express-session');
-const SQLiteStore = require('connect-sqlite3')(session);
+const pgSession = require('connect-pg-simple')(session); // Postgres session store
 const QRCode = require('qrcode');
 const fetch = require('node-fetch'); // For API calls
 const UAParser = require('ua-parser-js'); // For Browser/OS detection
+const cloudinary = require('cloudinary').v2; // Cloudinary for PDF uploads
 
 // --- Database Setup ---
-const { db, initDb } = require('./database.js'); // Import
+const { pool, initDb } = require('./database.js'); // Import Postgres pool
 initDb(); // <-- Call it here to set up tables
+
+// --- Cloudinary Setup ---
+// These are read from your Render Environment Variables
+cloudinary.config({ 
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME, 
+  api_key: process.env.CLOUDINARY_API_KEY, 
+  api_secret: process.env.CLOUDINARY_API_SECRET 
+});
 
 // --- Main App Setup ---
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000; // Use Render's port
 const saltRounds = 10;
-app.set('trust proxy', 1); // CRITICAL for getting real IP on Replit/Render
+app.set('trust proxy', 1); // CRITICAL for getting real IP on Render
 
 // --- EJS Template Engine ---
 app.set('view engine', 'ejs');
@@ -27,80 +37,47 @@ app.set('views', path.join(__dirname, 'views'));
 
 // --- Middleware ---
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public')); // For static files like CSS (if you add any)
+app.use(express.static('public')); // For future static files
 
-// --- NEW: Define a persistent data directory ---
-const dataDir = '/var/data';
-const uploadDir = path.join(dataDir, 'uploads'); // Save PDFs in /var/data/uploads
-if (!fs.existsSync(uploadDir)){
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
-// This makes /uploads/123.pdf available to the public
-app.use('/uploads', express.static(uploadDir));
-// --- END NEW ---
-
-// --- Session Middleware (for Logins) ---
+// --- Session Middleware (NOW FOR POSTGRES) ---
 app.use(
     session({
-        store: new SQLiteStore({
-            db: 'sessions.db', // The session database file
-            dir: dataDir, // <-- NEW: Save sessions in /var/data
-            concurrentDB: true
+        store: new pgSession({
+            pool: pool, // Use our Neon database pool
+            tableName: 'session' // A new table to store sessions
         }),
-        secret: 'your_secret_key_12345', // Change this!
+        secret: process.env.SESSION_SECRET || 'your_secret_key_12345', // Read from Render env
         resave: false,
         saveUninitialized: false,
         cookie: { maxAge: 24 * 60 * 60 * 1000 } // 1 day
     })
 );
 
-// --- Create Default Admin User (on startup) ---
-async function createDefaultAdmin() {
-    const adminUsername = 'admin';
-    const adminPassword = 'admin123';
-    db.get("SELECT * FROM users WHERE username = ?", [adminUsername], async (err, row) => {
-        if (err) return console.error("Error checking for admin:", err.message);
-        if (!row) {
-            console.log("Creating default 'admin' user with password 'admin123'...");
-            try {
-                const hash = await bcrypt.hash(adminPassword, saltRounds);
-                // Create admin as a superadmin with all permissions
-                const sql = `INSERT INTO users (username, password_hash, is_superadmin, can_add, can_delete, can_view_analytics)
-                             VALUES (?, ?, 1, 1, 1, 1)`;
-                db.run(sql, [adminUsername, hash], (err) => {
-                    if (err) console.error("Error creating admin user:", err.message);
-                    else console.log("Default admin user created successfully.");
-                });
-            } catch (hashErr) {
-                console.error("Error hashing password:", hashErr);
-            }
-        }
-    });
-}
-createDefaultAdmin();
-
 // --- ================================== ---
 // --- PERMISSION MIDDLEWARE ---
 // --- ================================== ---
 
 // Base check: Is the user logged in?
-function isAuthenticated(req, res, next) {
+async function isAuthenticated(req, res, next) {
     if (!req.session.user) {
         return res.redirect('/login');
     }
     
     // Fetch *current* permissions from DB on every secure request
-    db.get("SELECT * FROM users WHERE id = ?", [req.session.user.id], (err, user) => {
-        if (err || !user) {
+    try {
+        const result = await pool.query("SELECT * FROM users WHERE id = $1", [req.session.user.id]);
+        if (result.rows.length === 0) {
             return req.session.destroy(() => {
                 res.redirect('/login');
             });
         }
         // Attach full, up-to-date user object to req and res.locals
-        req.user = user; 
-        res.locals.user = user; // Makes 'user' variable available in ALL EJS templates
+        req.user = result.rows[0]; 
+        res.locals.user = result.rows[0]; // Makes 'user' variable available in ALL EJS templates
         next();
-    });
+    } catch (err) {
+        return res.redirect('/login');
+    }
 }
 
 // Is the user a Super Admin?
@@ -147,9 +124,9 @@ function canViewAnalytics(req, res, next) {
 function logAction(user, action_type, details) {
     const userId = user ? user.id : null;
     const username = user ? user.username : 'SYSTEM';
-    const sql = `INSERT INTO history_logs (user_id, username, action_type, details) VALUES (?, ?, ?, ?)`;
-    db.run(sql, [userId, username, action_type, details], (err) => {
-        if (err) console.error("Failed to log action:", err.message);
+    const sql = `INSERT INTO history_logs (user_id, username, action_type, details) VALUES ($1, $2, $3, $4)`;
+    pool.query(sql, [userId, username, action_type, details], (err) => {
+        if (err) console.error("Failed to log action:", err.stack);
     });
 }
 
@@ -260,20 +237,18 @@ async function logClickAnalytics(clickId, ipAddress) {
 
     try {
         const sql = `UPDATE link_clicks 
-                     SET country = ?, country_code = ?, city = ?, isp = ?
-                     WHERE id = ?`;
+                     SET country = $1, country_code = $2, city = $3, isp = $4
+                     WHERE id = $5`;
         
-        db.run(sql, [
+        await pool.query(sql, [
             locationData.country,
             locationData.country_code,
             locationData.city,
             locationData.isp,
             clickId
-        ], (err) => {
-            if (err) console.error("Error updating analytics location data:", err.message);
-        });
+        ]);
     } catch (error) {
-        console.error("Error saving analytics location data:", error);
+        console.error("Error saving analytics location data:", error.stack);
     }
 }
 
@@ -282,19 +257,19 @@ async function logClickAnalytics(clickId, ipAddress) {
 // --- ================================== ---
 
 // GET /diamonds/:stockId - Public page (NOW WITH HYBRID CERTIFICATE LOGIC)
-app.get('/diamonds/:stockId', (req, res) => {
+app.get('/diamonds/:stockId', async (req, res) => {
     // --- CASE-INSENSITIVE FIX ---
     const stock_id_from_url = (req.params.stockId || '').toUpperCase();
     
-    db.get("SELECT * FROM stones WHERE stock_id = ?", [stock_id_from_url], (err, row) => {
-        if (err) {
-            console.error(err);
-            return res.status(500).send("Server error");
-        }
-        if (!row) {
+    try {
+        const result = await pool.query("SELECT * FROM stones WHERE stock_id = $1", [stock_id_from_url]);
+        
+        if (result.rows.length === 0) {
             return res.status(404).render('404', { stock_id: req.params.stockId });
         }
         
+        const row = result.rows[0];
+
         // --- Full Analytics Tracking ---
         const ipAddress = req.ip; 
         const referrerString = req.get('Referrer') || 'Direct';
@@ -307,22 +282,25 @@ app.get('/diamonds/:stockId', (req, res) => {
             medium: req.query.utm_medium || null,
             campaign: req.query.utm_campaign || null
         };
+        
         const sql = `INSERT INTO link_clicks (
                         stock_id, ip_address, 
                         social_source, referrer_domain, 
                         user_agent, browser, os,
                         utm_source, utm_medium, utm_campaign
                      ) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-        db.run(sql, [
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                     RETURNING id`; // Get the ID of the new row
+        
+        const analyticsResult = await pool.query(sql, [
             row.stock_id, ipAddress,
             referrerInfo.source, referrerInfo.domain,
             uaString, device.browser.name, device.os.name,
             utmParams.source, utmParams.medium, utmParams.campaign
-        ], function(err) {
-            if (err) console.error("Error logging click:", err.message);
-            else logClickAnalytics(this.lastID, ipAddress);
-        });
+        ]);
+        
+        const clickId = analyticsResult.rows[0].id;
+        logClickAnalytics(clickId, ipAddress); // Run this in the background
         // --- END: Analytics Tracking ---
 
         const baseUrl = req.protocol + '://' + req.get('host');
@@ -333,10 +311,10 @@ app.get('/diamonds/:stockId', (req, res) => {
         let cert_type = 'none';
         let certificate_url_to_show = null;
 
-        if (row.certificate_pdf_path) {
+        if (row.certificate_pdf_url) { // Use new "pdf_url" column
             // 1. PDF is uploaded! This is the "perfect" experience.
             cert_type = 'pdf';
-            certificate_url_to_show = row.certificate_pdf_path; // e.g., /uploads/1234567.pdf
+            certificate_url_to_show = row.certificate_pdf_url; // This is a full Cloudinary URL
         } else if (row.lab && row.certificate_number) {
             // 2. No PDF. Fallback to building the link automatically.
             cert_type = 'link';
@@ -353,7 +331,11 @@ app.get('/diamonds/:stockId', (req, res) => {
             video_url: row.video_url,
             publicUrl: publicUrl
         });
-    });
+
+    } catch (err) {
+        console.error("Error fetching diamond:", err.stack);
+        return res.status(500).send("Server error");
+    }
 });
 
 // --- ================================== ---
@@ -366,13 +348,17 @@ app.get('/login', (req, res) => {
 });
 
 // POST /login
-app.post('/login', (req, res) => {
+app.post('/login', async (req, res) => {
     const { username, password } = req.body;
-    db.get("SELECT * FROM users WHERE username = ?", [username], async (err, user) => {
-        if (err || !user) {
+    try {
+        const result = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
+        if (result.rows.length === 0) {
             return res.render('login', { message: { type: 'error', text: 'Invalid username or password.' } });
         }
+        
+        const user = result.rows[0];
         const match = await bcrypt.compare(password, user.password_hash);
+
         if (match) {
             req.session.user = { id: user.id, username: user.username };
             logAction(req.session.user, 'LOGIN', 'User logged in.');
@@ -380,7 +366,10 @@ app.post('/login', (req, res) => {
         } else {
             return res.render('login', { message: { type: 'error', text: 'Invalid username or password.' } });
         }
-    });
+    } catch (err) {
+        console.error("Login error:", err.stack);
+        return res.render('login', { message: { type: 'error', text: 'Server error.' } });
+    }
 });
 
 // GET /logout
@@ -410,7 +399,7 @@ app.get('/admin', isAuthenticated, (req, res) => {
 });
 
 // GET /admin/manage - Manage Stones
-app.get('/admin/manage', isAuthenticated, (req, res) => {
+app.get('/admin/manage', isAuthenticated, async (req, res) => {
     const baseUrl = req.protocol + '://' + req.get('host');
     const searchQuery = req.query.search || '';
     
@@ -436,68 +425,83 @@ app.get('/admin/manage', isAuthenticated, (req, res) => {
     if (searchQuery) {
         const searchTerms = searchQuery.split(',').map(term => term.trim().toUpperCase()).filter(term => term.length > 0);
         if (searchTerms.length > 0) {
-            const placeholders = searchTerms.map(() => '?').join(',');
+            const placeholders = searchTerms.map((_, i) => `$${i + 1}`).join(',');
             sql += ` WHERE stock_id IN (${placeholders})`;
             params = searchTerms;
         }
     }
     sql += " ORDER BY id DESC";
 
-    db.all(sql, params, (err, stones) => {
-        if (err) return res.status(500).send("Server error");
+    try {
+        const result = await pool.query(sql, params);
         res.render('admin/manage', { 
-            stones: stones, 
+            stones: result.rows, 
             message: message,
             baseUrl: baseUrl,
             searchQuery: searchQuery
         });
-    });
+    } catch (err) {
+        console.error("Error fetching stones for manage page:", err.stack);
+        return res.status(500).send("Server error");
+    }
 });
 
 // GET /admin/qr/:stockId
-app.get('/admin/qr/:stockId', isAuthenticated, (req, res) => {
+app.get('/admin/qr/:stockId', isAuthenticated, async (req, res) => {
     const stock_id_from_url = (req.params.stockId || '').toUpperCase();
     const baseUrl = req.protocol + '://' + req.get('host');
     const publicUrl = `${baseUrl}/diamonds/${stock_id_from_url}?utm_source=qrcode&utm_medium=print`;
 
-    db.get("SELECT * FROM stones WHERE stock_id = ?", [stock_id_from_url], (err, stone) => {
-        if (err || !stone) return res.status(404).send("Stone not found");
-
-        QRCode.toDataURL(publicUrl, { width: 300, margin: 2 }, (err, qrCodeDataUrl) => {
-            if (err) return res.status(500).send("Error generating QR code");
+    try {
+        const result = await pool.query("SELECT * FROM stones WHERE stock_id = $1", [stock_id_from_url]);
+        if (result.rows.length === 0) return res.status(404).send("Stone not found");
+        
+        const stone = result.rows[0];
+        const qrCodeDataUrl = await QRCode.toDataURL(publicUrl, { width: 300, margin: 2 });
             
-            res.render('admin/qr_code', {
-                stock_id: stone.stock_id,
-                publicUrl: publicUrl,
-                baseUrl: baseUrl,
-                qrCodeDataUrl: qrCodeDataUrl
-            });
+        res.render('admin/qr_code', {
+            stock_id: stone.stock_id,
+            publicUrl: publicUrl,
+            baseUrl: baseUrl,
+            qrCodeDataUrl: qrCodeDataUrl
         });
-    });
+    } catch (err) {
+        console.error("Error generating QR code:", err.stack);
+        return res.status(500).send("Error generating QR code");
+    }
 });
 
-// POST /admin/add-single (UPDATED for new DB structure)
-app.post('/admin/add-single', isAuthenticated, canAdd, (req, res) => {
+// POST /admin/add-single (UPDATED for Postgres)
+app.post('/admin/add-single', isAuthenticated, canAdd, async (req, res) => {
     const stock_id = (req.body.stock_id || '').trim().toUpperCase();
     const { video_url, lab, certificate_number } = req.body;
     
     if (!stock_id) {
         return res.render('admin/dashboard', { message: { type: 'error', text: 'Stock ID is required.' }, showDisclaimer: false });
     }
-    const sql = "INSERT OR IGNORE INTO stones (stock_id, video_url, lab, certificate_number, certificate_pdf_path) VALUES (?, ?, ?, ?, NULL)";
-    db.run(sql, [stock_id, video_url, lab, (certificate_number || null)], function(err) {
-        if (err) return res.render('admin/dashboard', { message: { type: 'error', text: 'Database error.' }, showDisclaimer: false });
-        if (this.changes === 0) {
+    
+    try {
+        const sql = `INSERT INTO stones (stock_id, video_url, lab, certificate_number) 
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (stock_id) DO NOTHING`;
+        const result = await pool.query(sql, [stock_id, video_url, lab, (certificate_number || null)]);
+
+        if (result.rowCount === 0) {
             return res.render('admin/dashboard', { message: { type: 'error', text: `Stock ID '${stock_id}' already exists.` }, showDisclaimer: false });
         }
+        
         logAction(req.user, 'ADD_SINGLE', `Added stone: ${stock_id}`);
         res.render('admin/dashboard', { message: { type: 'success', text: `Stone '${stock_id}' added successfully!` }, showDisclaimer: false });
-    });
+    
+    } catch (err) {
+        console.error("Error adding single stone:", err.stack);
+        return res.render('admin/dashboard', { message: { type: 'error', text: 'Database error.' }, showDisclaimer: false });
+    }
 });
 
-// POST /admin/upload-bulk (UPDATED for new DB structure)
+// POST /admin/upload-bulk (UPDATED for Postgres)
 const excelUpload = multer({ storage: multer.memoryStorage() }); // For Excel
-app.post('/admin/upload-bulk', isAuthenticated, canAdd, excelUpload.single('diamondFile'), (req, res) => {
+app.post('/admin/upload-bulk', isAuthenticated, canAdd, excelUpload.single('diamondFile'), async (req, res) => {
     if (!req.file) {
         return res.render('admin/dashboard', { message: { type: 'error', text: 'No file uploaded.' }, showDisclaimer: false });
     }
@@ -507,59 +511,55 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, excelUpload.single('diam
         const sheet = workbook.Sheets[sheetName];
         const jsonData = xlsx.utils.sheet_to_json(sheet);
         
-        const sql = "INSERT OR IGNORE INTO stones (stock_id, video_url, lab, certificate_number, certificate_pdf_path) VALUES (?, ?, ?, ?, NULL)";
-        
         let stonesAdded = 0;
         let stonesIgnored = 0;
-        db.serialize(() => {
-            const stmt = db.prepare(sql);
+
+        // Use a client for transaction
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const sql = `INSERT INTO stones (stock_id, video_url, lab, certificate_number) 
+                         VALUES ($1, $2, $3, $4)
+                         ON CONFLICT (stock_id) DO NOTHING`;
+
             for (const row of jsonData) {
-                // --- THIS IS THE FIX ---
-                // Find keys that *look like* our target keys, regardless of case or spacing
                 const stockIdKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'stock_id');
                 const videoUrlKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'video_url');
                 const labKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'lab');
                 const certNumKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'certificate_number');
                 
-                // Now use the *found* key to get the value
                 const stock_id = String(row[stockIdKey] || '').trim().toUpperCase();
                 const video_url = row[videoUrlKey] || null;
                 const lab = row[labKey] || null;
                 const certificate_number = row[certNumKey] || null;
-                // --- END FIX ---
                 
                 if (stock_id) {
-                    stmt.run(stock_id, video_url, lab, certificate_number, function(err) {
-                        if (err) console.error("Error inserting row:", err.message);
-                        else if (this.changes > 0) stonesAdded++;
-                        else stonesIgnored++;
-                    });
+                    const result = await client.query(sql, [stock_id, video_url, lab, certificate_number]);
+                    if (result.rowCount > 0) stonesAdded++;
+                    else stonesIgnored++;
                 }
             }
-            stmt.finalize((err) => {
-                if (err) return res.render('admin/dashboard', { message: { type: 'error', text: 'Error processing file.' }, showDisclaimer: false });
-                const details = `Bulk upload: Added ${stonesAdded}, Ignored ${stonesIgnored}.`;
-                logAction(req.user, 'ADD_BULK', details);
-                res.render('admin/dashboard', { message: { type: 'success', text: `Bulk upload complete! Added: ${stonesAdded}, Ignored (duplicates): ${stonesIgnored}` }, showDisclaimer: false });
-            });
-        });
+            await client.query('COMMIT');
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
+
+        const details = `Bulk upload: Added ${stonesAdded}, Ignored ${stonesIgnored}.`;
+        logAction(req.user, 'ADD_BULK', details);
+        res.render('admin/dashboard', { message: { type: 'success', text: `Bulk upload complete! Added: ${stonesAdded}, Ignored (duplicates): ${stonesIgnored}` }, showDisclaimer: false });
+
     } catch (error) {
-        console.error(error);
+        console.error("Error in bulk upload:", error.stack);
         res.render('admin/dashboard', { message: { type: 'error', text: 'Invalid file format. Please use .xlsx or .csv' }, showDisclaimer: false });
     }
 });
 
-// --- NEW: SMART PDF BULK UPLOADER ---
-const pdfStorage = multer.diskStorage({
-    destination: uploadDir,
-    filename: (req, file, cb) => {
-        const originalName = file.originalname;
-        const sanitizedName = originalName.replace(/[^a-zA-Z0-9.\-]/g, '_'); // Replace weird characters
-        cb(null, sanitizedName);
-    }
-});
+// --- NEW: SMART PDF BULK UPLOADER (NOW FOR CLOUDINARY) ---
 const pdfUpload = multer({ 
-    storage: pdfStorage,
+    storage: multer.memoryStorage(), // Use memory storage
     fileFilter: (req, file, cb) => {
         if (path.extname(file.originalname).toLowerCase() !== '.pdf') {
             return cb(new Error('Only .pdf files are allowed'), false);
@@ -568,47 +568,70 @@ const pdfUpload = multer({
     }
 });
 
-app.post('/admin/upload-pdf', isAuthenticated, canAdd, pdfUpload.array('pdfFiles'), (req, res) => {
+app.post('/admin/upload-pdf', isAuthenticated, canAdd, pdfUpload.array('pdfFiles'), async (req, res) => {
     if (!req.files || req.files.length === 0) {
         return res.redirect('/admin/manage');
     }
 
     let filesMatched = 0;
     let filesUnmatched = 0;
-    const promises = [];
-    const sql = "UPDATE stones SET certificate_pdf_path = ? WHERE certificate_number = ?";
 
-    for (const file of req.files) {
-        const certNumber = path.basename(file.filename, '.pdf');
-        const pdfPath = `/uploads/${file.filename}`;
+    const uploadPromises = req.files.map(file => {
+        return new Promise((resolve, reject) => {
+            const certNumber = path.basename(file.originalname, '.pdf');
+            
+            // Upload the file buffer to Cloudinary
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    resource_type: 'raw', // Treat as a raw file, not an image
+                    public_id: certNumber, // Use cert number as the file name
+                    folder: 'certificates' // Put in a 'certificates' folder
+                },
+                async (error, result) => {
+                    if (error) {
+                        console.error("Cloudinary upload error:", error);
+                        filesUnmatched++;
+                        return reject(error);
+                    }
 
-        const promise = new Promise((resolve, reject) => {
-            db.run(sql, [pdfPath, certNumber], function(err) {
-                if (err) {
-                    console.error("Error matching PDF:", err.message);
-                    return reject(err);
+                    // Upload success! Now update the database
+                    const pdfUrl = result.secure_url;
+                    try {
+                        const dbResult = await pool.query(
+                            "UPDATE stones SET certificate_pdf_url = $1 WHERE certificate_number = $2",
+                            [pdfUrl, certNumber]
+                        );
+                        if (dbResult.rowCount > 0) {
+                            filesMatched++;
+                        } else {
+                            filesUnmatched++;
+                            // If no match, delete the file we just uploaded
+                            await cloudinary.uploader.destroy(result.public_id, { resource_type: 'raw' });
+                        }
+                        resolve();
+                    } catch (dbError) {
+                        console.error("DB update error after PDF upload:", dbError);
+                        filesUnmatched++;
+                        // Try to delete the orphaned file
+                        await cloudinary.uploader.destroy(result.public_id, { resource_type: 'raw' });
+                        reject(dbError);
+                    }
                 }
-                if (this.changes > 0) {
-                    filesMatched++;
-                } else {
-                    filesUnmatched++;
-                    fs.unlink(file.path, (err) => { if (err) console.error("Error deleting unmatched PDF:", err); });
-                }
-                resolve();
-            });
+            );
+            // Send the file buffer to Cloudinary
+            uploadStream.end(file.buffer);
         });
-        promises.push(promise);
+    });
+
+    // Wait for all uploads and DB updates to finish
+    try {
+        await Promise.all(uploadPromises);
+        logAction(req.user, 'UPLOAD_PDF', `Matched ${filesMatched} PDFs, Unmatched ${filesUnmatched}.`);
+        res.redirect(`/admin/manage?success=pdf_upload&matched=${filesMatched}&unmatched=${filesUnmatched}`);
+    } catch (err) {
+        console.error("PDF Upload batch failed", err);
+        res.redirect('/admin/manage?error=pdf_upload_failed');
     }
-
-    Promise.all(promises)
-        .then(() => {
-            logAction(req.user, 'UPLOAD_PDF', `Matched ${filesMatched} PDFs, Unmatched/Deleted ${filesUnmatched}.`);
-            res.redirect(`/admin/manage?success=pdf_upload&matched=${filesMatched}&unmatched=${filesUnmatched}`);
-        })
-        .catch((err) => {
-            console.error("PDF Upload batch failed", err);
-            res.redirect('/admin/manage?error=pdf_upload_failed');
-        });
 });
 // --- END: SMART PDF UPLOADER ---
 
@@ -658,158 +681,169 @@ app.post('/admin/generate-links', isAuthenticated, canAdd, linkGenUpload.single(
     }
 });
 
-// GET /admin/edit-stone/:id (UPDATED for new DB structure)
-app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, (req, res) => {
+// GET /admin/edit-stone/:id (UPDATED for Postgres)
+app.get('/admin/edit-stone/:id', isAuthenticated, canAdd, async (req, res) => {
     const stoneIdToEdit = req.params.id;
-    db.get("SELECT * FROM stones WHERE id = ?", [stoneIdToEdit], (err, stone) => {
-        if (err || !stone) {
+    try {
+        const result = await pool.query("SELECT * FROM stones WHERE id = $1", [stoneIdToEdit]);
+        if (result.rows.length === 0) {
             return res.redirect('/admin/manage');
         }
-        res.render('admin/edit_stone', { stone: stone, message: null });
-    });
+        res.render('admin/edit_stone', { stone: result.rows[0], message: null });
+    } catch (err) {
+        console.error("Error fetching stone to edit:", err.stack);
+        return res.redirect('/admin/manage');
+    }
 });
 
-// POST /admin/update-stone (UPDATED for new DB structure)
-app.post('/admin/update-stone', isAuthenticated, canAdd, (req, res) => {
+// POST /admin/update-stone (UPDATED for Postgres)
+app.post('/admin/update-stone', isAuthenticated, canAdd, async (req, res) => {
     const { id, video_url, lab, certificate_number } = req.body;
     const stock_id = (req.body.stock_id || '').trim().toUpperCase();
 
     if (!stock_id) {
-        db.get("SELECT * FROM stones WHERE id = ?", [id], (err, stone) => {
-            res.render('admin/edit_stone', { 
-                stone: stone, 
-                message: { type: 'error', text: 'Stock ID cannot be empty.' }
-            });
+        const result = await pool.query("SELECT * FROM stones WHERE id = $1", [id]);
+        return res.render('admin/edit_stone', { 
+            stone: result.rows[0], 
+            message: { type: 'error', text: 'Stock ID cannot be empty.' }
         });
-        return;
     }
 
     const sql = `UPDATE stones SET 
-                    stock_id = ?,
-                    video_url = ?,
-                    lab = ?,
-                    certificate_number = ?
-                 WHERE id = ?`;
+                    stock_id = $1,
+                    video_url = $2,
+                    lab = $3,
+                    certificate_number = $4
+                 WHERE id = $5`;
     
-    db.run(sql, [stock_id, video_url, lab, certificate_number, id], function(err) {
-        if (err) {
-            if (err.code === 'SQLITE_CONSTRAINT') {
-                db.get("SELECT * FROM stones WHERE id = ?", [id], (err_fetch, stone) => {
-                    res.render('admin/edit_stone', { 
-                        stone: stone, 
-                        message: { type: 'error', text: `Error: Stock ID '${stock_id}' already exists.` }
-                    });
-                });
-                return;
-            }
-            console.error(err);
-            return res.redirect('/admin/manage');
-        }
-        
+    try {
+        await pool.query(sql, [stock_id, video_url, lab, certificate_number, id]);
         logAction(req.user, 'EDIT_STONE', `Updated stone: ${stock_id} (ID: ${id})`);
         res.redirect('/admin/manage');
-    });
+    } catch (err) {
+        // Check for UNIQUE constraint error (code '23505' in Postgres)
+        if (err.code === '23505') {
+            const result = await pool.query("SELECT * FROM stones WHERE id = $1", [id]);
+            return res.render('admin/edit_stone', { 
+                stone: result.rows[0], 
+                message: { type: 'error', text: `Error: Stock ID '${stock_id}' already exists.` }
+            });
+        }
+        console.error("Error updating stone:", err.stack);
+        return res.redirect('/admin/manage');
+    }
 });
 
-// --- NEW: DELETE PDF ROUTE ---
-app.post('/admin/delete-pdf', isAuthenticated, canAdd, (req, res) => {
+// --- NEW: DELETE PDF ROUTE (FOR CLOUDINARY) ---
+app.post('/admin/delete-pdf', isAuthenticated, canAdd, async (req, res) => {
     const { id } = req.body;
     
-    // 1. Find the stone to get its PDF path
-    db.get("SELECT * FROM stones WHERE id = ?", [id], (err, stone) => {
-        if (err) console.error(err);
-        if (stone && stone.certificate_pdf_path) {
+    try {
+        // 1. Find the stone to get its PDF URL
+        const result = await pool.query("SELECT * FROM stones WHERE id = $1", [id]);
+        const stone = result.rows[0];
+
+        if (stone && stone.certificate_pdf_url) {
+            // 2. Delete the PDF from Cloudinary
+            // Extract the public_id from the URL
+            const urlParts = stone.certificate_pdf_url.split('/');
+            const public_id_with_ext = urlParts.slice(urlParts.indexOf('certificates')).join('/');
+            const public_id = path.parse(public_id_with_ext).name;
             
-            // 2. Delete the PDF file from disk
-            const pdfPath = path.join(__dirname, 'public', stone.certificate_pdf_path);
-            fs.unlink(pdfPath, (unlinkErr) => {
-                if (unlinkErr && unlinkErr.code !== 'ENOENT') {
-                    console.error("Error deleting PDF file:", unlinkErr);
-                }
-            });
+            await cloudinary.uploader.destroy(`certificates/${public_id}`, { resource_type: 'raw' });
             
             // 3. Set the PDF path to NULL in the database
-            db.run("UPDATE stones SET certificate_pdf_path = NULL WHERE id = ?", [id], (updateErr) => {
-                if (updateErr) console.error(updateErr);
-                logAction(req.user, 'DELETE_PDF', `Deleted PDF for stone: ${stone.stock_id}`);
-                
-                // 4. Redirect back to the edit page with a success message
-                db.get("SELECT * FROM stones WHERE id = ?", [id], (err_fetch, updatedStone) => {
-                    res.render('admin/edit_stone', { 
-                        stone: updatedStone, 
-                        message: { type: 'success', text: 'PDF successfully deleted.' }
-                    });
-                });
+            await pool.query("UPDATE stones SET certificate_pdf_url = NULL WHERE id = $1", [id]);
+            logAction(req.user, 'DELETE_PDF', `Deleted PDF for stone: ${stone.stock_id}`);
+            
+            // 4. Redirect back to the edit page with a success message
+            const updatedStone = (await pool.query("SELECT * FROM stones WHERE id = $1", [id])).rows[0];
+            return res.render('admin/edit_stone', { 
+                stone: updatedStone, 
+                message: { type: 'success', text: 'PDF successfully deleted.' }
             });
-
         } else {
             // No PDF to delete, just go back
             res.redirect(`/admin/edit-stone/${id}`);
         }
-    });
+    } catch (err) {
+        console.error("Error deleting PDF:", err.stack);
+        res.redirect(`/admin/edit-stone/${id}`);
+    }
 });
 // --- END: DELETE PDF ROUTE ---
 
 
-// POST /admin/delete-stone (UPDATED to delete PDF)
-app.post('/admin/delete-stone', isAuthenticated, canDelete, (req, res) => {
+// POST /admin/delete-stone (UPDATED to delete PDF from Cloudinary)
+app.post('/admin/delete-stone', isAuthenticated, canDelete, async (req, res) => {
     const { id, stock_id } = req.body;
 
-    db.get("SELECT certificate_pdf_path FROM stones WHERE id = ?", [id], (err, stone) => {
-        if (err) console.error(err);
-        if (stone && stone.certificate_pdf_path) {
-            const pdfPath = path.join(__dirname, 'public', stone.certificate_pdf_path);
-            fs.unlink(pdfPath, (unlinkErr) => {
-                if (unlinkErr && unlinkErr.code !== 'ENOENT') {
-                    console.error("Error deleting PDF file:", unlinkErr);
-                } else {
-                    console.log(`Deleted PDF: ${pdfPath}`);
-                }
-            });
+    try {
+        // 1. Find the stone to get its PDF path
+        const result = await pool.query("SELECT certificate_pdf_url FROM stones WHERE id = $1", [id]);
+        
+        if (result.rows.length > 0 && result.rows[0].certificate_pdf_url) {
+            // 2. Delete the PDF from Cloudinary
+            const url = result.rows[0].certificate_pdf_url;
+            const urlParts = url.split('/');
+            const public_id_with_ext = urlParts.slice(urlParts.indexOf('certificates')).join('/');
+            const public_id = path.parse(public_id_with_ext).name;
+            
+            await cloudinary.uploader.destroy(`certificates/${public_id}`, { resource_type: 'raw' });
         }
         
-        db.run("DELETE FROM stones WHERE id = ?", [id], (err) => {
-            if (err) console.error(err);
-            else logAction(req.user, 'DELETE_STONE', `Deleted stone: ${stock_id} (ID: ${id})`);
-            res.redirect('/admin/manage');
-        });
-    });
+        // 3. Delete the stone from database
+        await pool.query("DELETE FROM stones WHERE id = $1", [id]);
+        logAction(req.user, 'DELETE_STONE', `Deleted stone: ${stock_id} (ID: ${id})`);
+        res.redirect('/admin/manage');
+
+    } catch (err) {
+        console.error("Error deleting stone:", err.stack);
+        res.redirect('/admin/manage');
+    }
 });
 
-// POST /admin/delete-all-stones (UPDATED to delete all PDFs)
-app.post('/admin/delete-all-stones', isAuthenticated, isSuperAdmin, (req, res) => {
-    db.run("DELETE FROM stones", [], (err) => {
-        if (err) {
-            console.error(err);
-            logAction(req.user, 'DELETE_ALL_STONES_FAIL', `Error: ${err.message}`);
-            return res.redirect('/admin/manage?error=delete_all_failed');
-        }
+// POST /admin/delete-all-stones (UPDATED to delete all PDFs from Cloudinary)
+app.post('/admin/delete-all-stones', isAuthenticated, isSuperAdmin, async (req, res) => {
+    try {
+        // 1. Get all PDF public_ids from the database
+        const result = await pool.query("SELECT certificate_pdf_url FROM stones WHERE certificate_pdf_url IS NOT NULL");
         
-        logAction(req.user, 'DELETE_ALL_STONES', 'User successfully deleted all stones.');
-        
-        fs.readdir(uploadDir, (err, files) => {
-            if (err) return console.error("Could not read uploads dir:", err);
-            for (const file of files) {
-                if (file === '.gitkeep') continue; // Don't delete .gitkeep
-                fs.unlink(path.join(uploadDir, file), unlinkErr => {
-                    if (unlinkErr) console.error("Error deleting a PDF:", unlinkErr);
-                });
-            }
-            console.log(`Cleared ${files.length} PDFs from uploads.`);
-        });
+        if (result.rows.length > 0) {
+            // 2. Extract Cloudinary public_ids
+            const public_ids = result.rows.map(row => {
+                const urlParts = row.certificate_pdf_url.split('/');
+                const public_id_with_ext = urlParts.slice(urlParts.indexOf('certificates')).join('/');
+                return path.parse(public_id_with_ext).name;
+            }).map(id => `certificates/${id}`); // Add the folder
 
+            // 3. Delete all files from Cloudinary in one batch
+            await cloudinary.api.delete_resources(public_ids, { resource_type: 'raw' });
+        }
+
+        // 4. Delete all rows from 'stones' table
+        await pool.query("DELETE FROM stones");
+        
+        logAction(req.user, 'DELETE_ALL_STONES', 'User successfully deleted all stones and associated PDFs.');
         res.redirect('/admin/manage?success=delete_all_success');
-    });
+        
+    } catch (err) {
+        console.error(err);
+        logAction(req.user, 'DELETE_ALL_STONES_FAIL', `Error: ${err.message}`);
+        return res.redirect('/admin/manage?error=delete_all_failed');
+    }
 });
 
 // --- UPDATED USER MANAGEMENT (Protected by isSuperAdmin) ---
 
 // GET /admin/users
-app.get('/admin/users', isAuthenticated, isSuperAdmin, (req, res) => {
-    db.all("SELECT * FROM users", [], (err, users) => {
-        if (err) return res.status(500).send("Server error");
-        res.render('admin/users', { users: users, message: null });
-    });
+app.get('/admin/users', isAuthenticated, isSuperAdmin, async (req, res) => {
+    try {
+        const result = await pool.query("SELECT * FROM users");
+        res.render('admin/users', { users: result.rows, message: null });
+    } catch (err) {
+        return res.status(500).send("Server error");
+    }
 });
 
 // POST /admin/add-user
@@ -820,151 +854,154 @@ app.post('/admin/add-user', isAuthenticated, isSuperAdmin, async (req, res) => {
     const can_delete = req.body.can_delete === 'on' ? 1 : 0;
     const can_view_analytics = req.body.can_view_analytics === 'on' ? 1 : 0;
     
-    if (!username || !password) {
-        db.all("SELECT * FROM users", [], (err, users) => {
-             res.render('admin/users', { users: users, message: {type: 'error', text: 'Username and password are required.'} });
-        });
-        return;
-    }
+    let users = [];
     try {
+        const usersResult = await pool.query("SELECT * FROM users");
+        users = usersResult.rows;
+
+        if (!username || !password) {
+             return res.render('admin/users', { users: users, message: {type: 'error', text: 'Username and password are required.'} });
+        }
+        if (password.length < 8) {
+            return res.render('admin/users', { users: users, message: {type: 'error', text: 'Password must be at least 8 characters.'} });
+        }
+
         const hash = await bcrypt.hash(password, saltRounds);
         const sql = `INSERT INTO users (username, password_hash, is_superadmin, can_add, can_delete, can_view_analytics) 
-                     VALUES (?, ?, ?, ?, ?, ?)`;
-        db.run(sql, [username, hash, is_superadmin, can_add, can_delete, can_view_analytics], (err) => {
-            if (err) {
-                 db.all("SELECT * FROM users", [], (err, users) => {
-                    res.render('admin/users', { users: users, message: {type: 'error', text: 'Username already exists.'} });
-                 });
-                 return;
-            }
-            logAction(req.user, 'ADD_USER', `Created new user: ${username}`);
-            res.redirect('/admin/users');
-        });
-    } catch (hashErr) {
-        db.all("SELECT * FROM users", [], (err, users) => {
-            res.render('admin/users', { users: users, message: {type: 'error', text: 'Error hashing password.'} });
-        });
+                     VALUES ($1, $2, $3, $4, $5, $6)`;
+        await pool.query(sql, [username, hash, is_superadmin, can_add, can_delete, can_view_analytics]);
+        
+        logAction(req.user, 'ADD_USER', `Created new user: ${username}`);
+        res.redirect('/admin/users');
+
+    } catch (err) {
+        if (err.code === '23505') { // Postgres unique violation
+             return res.render('admin/users', { users: users, message: {type: 'error', text: 'Username already exists.'} });
+        }
+        console.error("Error adding user:", err.stack);
+        return res.render('admin/users', { users: users, message: {type: 'error', text: 'Error hashing password or database error.'} });
     }
 });
 
 // GET /admin/edit-user/:id
-app.get('/admin/edit-user/:id', isAuthenticated, isSuperAdmin, (req, res) => {
+app.get('/admin/edit-user/:id', isAuthenticated, isSuperAdmin, async (req, res) => {
     const userIdToEdit = req.params.id;
-    db.get("SELECT * FROM users WHERE id = ?", [userIdToEdit], (err, userToEdit) => {
-        if (err || !userToEdit) {
+    try {
+        const result = await pool.query("SELECT * FROM users WHERE id = $1", [userIdToEdit]);
+        if (result.rows.length === 0) {
             return res.redirect('/admin/users');
         }
-        res.render('admin/edit_user', { userToEdit: userToEdit, message: null });
-    });
+        res.render('admin/edit_user', { userToEdit: result.rows[0], message: null });
+    } catch (err) {
+        return res.redirect('/admin/users');
+    }
 });
 
 // POST /admin/update-user
 app.post('/admin/update-user', isAuthenticated, isSuperAdmin, async (req, res) => {
     const { id, new_password, is_superadmin, can_add, can_delete, can_view_analytics } = req.body;
+    let userToEdit;
     
-    if (id == req.user.id && !is_superadmin) {
-        db.get("SELECT * FROM users WHERE id = ?", [id], (err, userToEdit) => {
-             res.render('admin/edit_user', { 
+    try {
+        const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [id]);
+        userToEdit = userResult.rows[0];
+
+        if (id == req.user.id && !is_superadmin) {
+             return res.render('admin/edit_user', { 
                 userToEdit: userToEdit,
                 message: { type: 'error', text: 'Error: You cannot remove your own Super Admin status.' }
             });
-        });
-        return;
-    }
-    
-    let passwordSql = "";
-    let passwordParams = [];
-    if (new_password) {
-        if (new_password.length < 8) {
-             db.get("SELECT * FROM users WHERE id = ?", [id], (err, userToEdit) => {
-                 res.render('admin/edit_user', { 
+        }
+        
+        let passwordSql = "";
+        let passwordParams = [];
+        if (new_password) {
+            if (new_password.length < 8) {
+                 return res.render('admin/edit_user', { 
                     userToEdit: userToEdit,
                     message: { type: 'error', text: 'Password must be at least 8 characters.' }
                 });
-             });
-             return;
-        }
-        try {
+            }
             const hash = await bcrypt.hash(new_password, saltRounds);
-            passwordSql = ", password_hash = ?";
+            passwordSql = ", password_hash = $6"; // Will be the 6th parameter
             passwordParams.push(hash);
             logAction(req.user, 'EDIT_USER_PASSWORD', `Changed password for user ID: ${id}`);
-        } catch (hashErr) {
-             db.get("SELECT * FROM users WHERE id = ?", [id], (err, userToEdit) => {
-                 res.render('admin/edit_user', { 
-                    userToEdit: userToEdit,
-                    message: { type: 'error', text: 'Error hashing new password.' }
-                });
-             });
-             return;
         }
-    }
 
-    const sql = `UPDATE users SET
-                    is_superadmin = ?,
-                    can_add = ?,
-                    can_delete = ?,
-                    can_view_analytics = ?
-                    ${passwordSql}
-                 WHERE id = ?`;
-                 
-    const params = [
-        is_superadmin === 'on' ? 1 : 0,
-        can_add === 'on' ? 1 : 0,
-        can_delete === 'on' ? 1 : 0,
-        can_view_analytics === 'on' ? 1 : 0,
-        ...passwordParams, // Add the hashed password if it exists
-        id
-    ];
-
-    db.run(sql, params, function(err) {
-        if (err) {
-            console.error(err);
-            return res.redirect(`/admin/edit-user/${id}`);
+        const sql = `UPDATE users SET
+                        is_superadmin = $1,
+                        can_add = $2,
+                        can_delete = $3,
+                        can_view_analytics = $4
+                        ${passwordSql}
+                     WHERE id = $5`;
+                     
+        const params = [
+            is_superadmin === 'on' ? 1 : 0,
+            can_add === 'on' ? 1 : 0,
+            can_delete === 'on' ? 1 : 0,
+            can_view_analytics === 'on' ? 1 : 0,
+            id
+        ];
+        
+        // Add password to the end of the params list *if it exists*
+        if (new_password) {
+            params.splice(4, 0, ...passwordParams); // Insert password hash before id
         }
+
+        await pool.query(sql, params);
         logAction(req.user, 'EDIT_USER_PERMS', `Updated permissions for user ID: ${id}`);
         res.redirect('/admin/users');
-    });
+
+    } catch (err) {
+        console.error("Error updating user:", err.stack);
+        return res.render('admin/edit_user', { 
+            userToEdit: userToEdit || { ...req.body, id: id },
+            message: { type: 'error', text: 'Error updating user.' }
+        });
+    }
 });
 
 // POST /admin/delete-user
-app.post('/admin/delete-user', isAuthenticated, isSuperAdmin, (req, res) => {
+app.post('/admin/delete-user', isAuthenticated, isSuperAdmin, async (req, res) => {
     const { id } = req.body;
-    if (id == req.user.id) {
-        db.all("SELECT * FROM users", [], (err, users) => {
-            res.render('admin/users', { users: users, message: {type: 'error', text: 'Error: You cannot delete yourself.'} });
-        });
-        return;
-    }
-    db.get("SELECT username FROM users WHERE id = ?", [id], (err, row) => {
-        if (err) return res.redirect('/admin/users');
-        const deletedUsername = row ? row.username : `ID ${id}`;
+    let users = [];
+    try {
+        users = (await pool.query("SELECT * FROM users")).rows;
+
+        if (id == req.user.id) {
+            return res.render('admin/users', { users: users, message: {type: 'error', text: 'Error: You cannot delete yourself.'} });
+        }
         
-        db.run("DELETE FROM users WHERE id = ?", [id], (err) => {
-            if (err) console.error(err);
-            else logAction(req.user, 'DELETE_USER', `Deleted user: ${deletedUsername}`);
-            res.redirect('/admin/users');
-        });
-    });
+        const userResult = await pool.query("SELECT username FROM users WHERE id = $1", [id]);
+        const deletedUsername = userResult.rows.length > 0 ? userResult.rows[0].username : `ID ${id}`;
+            
+        await pool.query("DELETE FROM users WHERE id = $1", [id]);
+        logAction(req.user, 'DELETE_USER', `Deleted user: ${deletedUsername}`);
+        res.redirect('/admin/users');
+
+    } catch (err) {
+        console.error("Error deleting user:", err.stack);
+        return res.render('admin/users', { users: users, message: {type: 'error', text: 'Error deleting user.'} });
+    }
 });
 
 // GET /admin/history (Base admin page)
-app.get('/admin/history', isAuthenticated, (req, res) => {
-    db.all("SELECT * FROM history_logs ORDER BY timestamp DESC LIMIT 100", [], (err, logs) => {
-        if (err) return res.status(500).send("Server error");
-        res.render('admin/history', { logs: logs });
-    });
+app.get('/admin/history', isAuthenticated, async (req, res) => {
+    try {
+        const result = await pool.query("SELECT * FROM history_logs ORDER BY timestamp DESC LIMIT 100");
+        res.render('admin/history', { logs: result.rows });
+    } catch (err) {
+        return res.status(500).send("Server error");
+    }
 });
 
 // --- NEW: Download History Route ---
-app.get('/admin/download-history', isAuthenticated, (req, res) => {
-    db.all("SELECT * FROM history_logs ORDER BY timestamp DESC", [], (err, logs) => {
-        if (err) {
-            console.error(err);
-            return res.status(500).send("Error fetching logs.");
-        }
+app.get('/admin/download-history', isAuthenticated, async (req, res) => {
+    try {
+        const result = await pool.query("SELECT * FROM history_logs ORDER BY timestamp DESC");
+        const logs = result.rows;
         
-        // Format logs for Excel
         const data = logs.map(log => ({
             timestamp: new Date(log.timestamp).toLocaleString(),
             username: log.username,
@@ -983,24 +1020,24 @@ app.get('/admin/download-history', isAuthenticated, (req, res) => {
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', 'attachment; filename=action_history.xlsx');
         res.send(buffer);
-    });
+    } catch (err) {
+        console.error("Error downloading history:", err.stack);
+        return res.status(500).send("Error fetching logs.");
+    }
 });
 
 // --- NEW: Download Stones Route ---
-app.get('/admin/download-stones', isAuthenticated, (req, res) => {
+app.get('/admin/download-stones', isAuthenticated, async (req, res) => {
     const baseUrl = req.protocol + '://' + req.get('host');
     
-    db.all("SELECT * FROM stones ORDER BY stock_id ASC", [], (err, stones) => {
-        if (err) {
-            console.error(err);
-            return res.status(500).send("Error fetching stones.");
-        }
+    try {
+        const result = await pool.query("SELECT * FROM stones ORDER BY stock_id ASC");
+        const stones = result.rows;
         
-        // Format data for Excel, including the final link
         const data = stones.map(stone => {
             let final_link = '';
-            if (stone.certificate_pdf_path) {
-                final_link = `${baseUrl}${stone.certificate_pdf_path}`;
+            if (stone.certificate_pdf_url) { // Use new 'pdf_url'
+                final_link = stone.certificate_pdf_url;
             } else {
                 final_link = buildCertificateUrl(stone.lab, stone.certificate_number) || 'N/A';
             }
@@ -1025,60 +1062,58 @@ app.get('/admin/download-stones', isAuthenticated, (req, res) => {
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.setHeader('Content-Disposition', 'attachment; filename=stone_inventory.xlsx');
         res.send(buffer);
-    });
+    } catch (err) {
+        console.error("Error downloading stones:", err.stack);
+        return res.status(500).send("Error fetching stones.");
+    }
 });
 
 // --- UPDATED ANALYTICS ROUTE (Now with full search & pagination) ---
-app.get('/admin/analytics', isAuthenticated, canViewAnalytics, (req, res) => {
+app.get('/admin/analytics', isAuthenticated, canViewAnalytics, async (req, res) => {
     const { stock_id, country, social_source, utm_source, browser, os } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = 25;
     const offset = (page - 1) * limit;
 
-    let sql = "SELECT * FROM link_clicks";
-    let countSql = "SELECT COUNT(*) AS count FROM link_clicks";
     let whereClauses = [];
     let params = [];
     let searchParams = { stock_id, country, social_source, utm_source, browser, os };
+    let paramIndex = 1;
 
-    if (stock_id) { whereClauses.push("stock_id LIKE ?"); params.push(`%${stock_id}%`); }
-    if (country) { whereClauses.push("country LIKE ?"); params.push(`%${country}%`); }
-    if (social_source) { whereClauses.push("social_source LIKE ?"); params.push(`%${social_source}%`); }
-    if (utm_source) { whereClauses.push("utm_source LIKE ?"); params.push(`%${utm_source}%`); }
-    if (browser) { whereClauses.push("browser LIKE ?"); params.push(`%${browser}%`); }
-    if (os) { whereClauses.push("os LIKE ?"); params.push(`%${os}%`); }
+    // Build WHERE clauses for search
+    if (stock_id) { whereClauses.push(`stock_id ILIKE $${paramIndex++}`); params.push(`%${stock_id}%`); }
+    if (country) { whereClauses.push(`country ILIKE $${paramIndex++}`); params.push(`%${country}%`); }
+    if (social_source) { whereClauses.push(`social_source ILIKE $${paramIndex++}`); params.push(`%${social_source}%`); }
+    if (utm_source) { whereClauses.push(`utm_source ILIKE $${paramIndex++}`); params.push(`%${utm_source}%`); }
+    if (browser) { whereClauses.push(`browser ILIKE $${paramIndex++}`); params.push(`%${browser}%`); }
+    if (os) { whereClauses.push(`os ILIKE $${paramIndex++}`); params.push(`%${os}%`); }
 
-    if (whereClauses.length > 0) {
-        const whereString = " WHERE " + whereClauses.join(" AND ");
-        sql += whereString;
-        countSql += whereString;
-    }
+    const whereString = whereClauses.length > 0 ? " WHERE " + whereClauses.join(" AND ") : "";
 
-    db.get(countSql, params, (err, row) => {
-        if (err) {
-            console.error(err);
-            return res.status(500).send("Server error");
-        }
-
-        const totalClicks = row.count;
+    try {
+        // First, get the total count for pagination
+        const countSql = "SELECT COUNT(*) AS count FROM link_clicks" + whereString;
+        const countResult = await pool.query(countSql, params);
+        const totalClicks = parseInt(countResult.rows[0].count);
         const totalPages = Math.ceil(totalClicks / limit) || 1;
 
-        sql += " ORDER BY timestamp DESC LIMIT ? OFFSET ?";
+        // Now, get the paginated data
+        let dataSql = "SELECT * FROM link_clicks" + whereString;
+        dataSql += ` ORDER BY timestamp DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
         params.push(limit, offset);
         
-        db.all(sql, params, (err, clicks) => {
-            if (err) {
-                console.error(err);
-                return res.status(500).send("Server error");
-            }
-            res.render('admin/analytics', { 
-                clicks: clicks,
-                totalPages: totalPages,
-                currentPage: page,
-                searchParams: searchParams
-            });
+        const dataResult = await pool.query(dataSql, params);
+        
+        res.render('admin/analytics', { 
+            clicks: dataResult.rows,
+            totalPages: totalPages,
+            currentPage: page,
+            searchParams: searchParams
         });
-    });
+    } catch (err) {
+        console.error("Error fetching analytics:", err.stack);
+        return res.status(500).send("Server error");
+    }
 });
 
 
@@ -1096,6 +1131,6 @@ app.get('/', (req, res) => {
 
 // --- Start Server ---
 app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
-    console.log(`Admin Login: http://localhost:${port}/login`);
+    console.log(`Server running at http://localhost:${port} or on port ${port}`);
+    console.log(`Admin Login: /login`);
 });
