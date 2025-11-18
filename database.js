@@ -3,37 +3,24 @@ const { Pool } = require('pg'); // Use the 'pg' library for
 const dotenv = require('dotenv');
 const path = require('path');
 const fs = require('fs');
+const bcrypt = require('bcrypt');
 
 // Load Environment Variables
 dotenv.config();
 
-// --- NEW: Define a persistent data directory ---
-// This path is for a Render.com persistent disk
-const dataDir = process.env.DATA_DIR || '/var/data'; 
-// Ensure this directory exists
+// --- THIS IS THE EACCES (Permission) FIX ---
+// We will create a local './data' folder which Render allows.
+const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) {
-    // If we're not on Render, use a local folder
-    try {
-        fs.mkdirSync(dataDir, { recursive: true });
-    } catch (e) {
-        // If it fails (like on Replit), fall back to a local dir
-        console.warn(`Warning: Could not create ${dataDir}. Falling back to local './data' directory.`);
-        const localDataDir = path.join(__dirname, 'data');
-        if (!fs.existsSync(localDataDir)) {
-            fs.mkdirSync(localDataDir, { recursive: true });
-        }
-        module.exports.dataDir = localDataDir;
-    }
+    fs.mkdirSync(dataDir, { recursive: true });
 }
-// This makes the final data directory path available to index.js
-const finalDataDir = fs.existsSync(dataDir) ? dataDir : path.join(__dirname, 'data');
-module.exports.dataDir = finalDataDir;
+// This path is for the session database
+const dbPath = path.join(dataDir, 'sessions.db');
+console.log(`Session database path set to: ${dbPath}`);
+module.exports.dataDir = dataDir; // Export this path for index.js
+// --- END FIX ---
 
-const dbPath = path.join(finalDataDir, 'diamonds.db');
-console.log(`Database path set to: ${dbPath}`);
-// --- END NEW ---
-
-// --- THIS IS THE ECONNREFUSED FIX ---
+// --- THIS IS THE ECONNREFUSED (Connection) FIX ---
 let connectionString = process.env.DATABASE_URL;
 if (connectionString && !connectionString.includes('sslmode=require')) {
     connectionString += '?sslmode=require';
