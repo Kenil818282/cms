@@ -11,14 +11,16 @@ const pgSession = require('connect-pg-simple')(session); // Postgres session sto
 const QRCode = require('qrcode');
 const fetch = require('node-fetch'); // For API calls
 const UAParser = require('ua-parser-js'); // For Browser/OS detection
-const cloudinary = require('cloudinary').v2; // <-- THIS IS THE FIX
+const cloudinary = require('cloudinary').v2; // <-- CLOUDINARY IS HERE
 
 // --- Database Setup ---
-const { pool, initDb } = require('./database.js'); // Import Postgres pool
-// --- DO NOT CALL initDb() here ---
+// --- THIS IS THE FIX ---
+// We now get 'dataDir' from database.js
+const { pool, initDb, dataDir } = require('./database.js'); 
+// --- END FIX ---
+initDb(); // <-- Call it here to set up tables
 
 // --- Cloudinary Setup ---
-// These are read from your Render Environment Variables
 cloudinary.config({ 
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME, 
   api_key: process.env.CLOUDINARY_API_KEY, 
@@ -39,26 +41,20 @@ app.set('views', path.join(__dirname, 'views'));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public')); // For future static files
 
-// --- NEW: Define a persistent data directory ---
-const dataDir = process.env.DATA_DIR || '/var/data'; // Use Render's /var/data
-const uploadDir = path.join(dataDir, 'uploads'); // Save PDFs in /var/data/uploads
-if (!fs.existsSync(uploadDir)){
-    try {
-        fs.mkdirSync(uploadDir, { recursive: true });
-        console.log(`Created persistent upload directory at: ${uploadDir}`);
-    } catch (e) {
-        console.error("CRITICAL ERROR: Could not create upload directory.", e);
-    }
-}
+// --- THIS IS THE EACCES FIX ---
+// 'uploadDir' is now the *root* of our persistent disk
+// We serve it at '/uploads' so links look like /uploads/123.pdf
+const uploadDir = dataDir; 
 app.use('/uploads', express.static(uploadDir));
-// --- END NEW ---
+// --- END FIX ---
 
 // --- Session Middleware (NOW FOR POSTGRES) ---
 app.use(
     session({
         store: new pgSession({
             pool: pool, // Use our Neon database pool
-            tableName: 'session' // A new table to store sessions
+            tableName: 'session', // A new table to store sessions
+            pruneSessionInterval: false // Render handles pruning
         }),
         secret: process.env.SESSION_SECRET || 'your_secret_key_12345', // Read from Render env
         resave: false,
@@ -77,7 +73,6 @@ async function isAuthenticated(req, res, next) {
         return res.redirect('/login');
     }
     
-    // Fetch *current* permissions from DB on every secure request
     try {
         const result = await pool.query("SELECT * FROM users WHERE id = $1", [req.session.user.id]);
         if (result.rows.length === 0) {
@@ -85,9 +80,8 @@ async function isAuthenticated(req, res, next) {
                 res.redirect('/login');
             });
         }
-        // Attach full, up-to-date user object to req and res.locals
         req.user = result.rows[0]; 
-        res.locals.user = result.rows[0]; // Makes 'user' variable available in ALL EJS templates
+        res.locals.user = result.rows[0];
         next();
     } catch (err) {
         console.error("isAuthenticated error:", err.stack);
@@ -104,7 +98,7 @@ function isSuperAdmin(req, res, next) {
     }
 }
 
-// Can the user add/upload? (NOW ALSO USED FOR EDITING)
+// Can the user add/upload?
 function canAdd(req, res, next) {
     if (req.user.is_superadmin || req.user.can_add) {
         next();
@@ -147,7 +141,6 @@ function logAction(user, action_type, details) {
 
 // HELPER: Get Video HTML
 function getVideoEmbedHtml(video_url) {
-    // (This function is unchanged)
     if (!video_url) {
         return '<div class="w-full h-full flex items-center justify-center bg-gray-200 text-gray-500 rounded-lg">No Video Available</div>';
     }
@@ -185,16 +178,13 @@ function buildCertificateUrl(lab, certificate_number) {
     if (!lab || !certificate_number) {
         return null;
     }
-    
     const labUpper = String(lab).toUpperCase();
-    
     if (labUpper === 'GIA') {
         return `https://www.gia.edu/report-check?locale=en_US&reportno=${certificate_number}`;
     } else if (labUpper === 'IGI') {
         return `https://www.igi.org/Verify-Your-Report/?r=${certificate_number}`;
     }
-    
-    return null; // Return null if lab is not recognized
+    return null;
 }
 
 // HELPER: Automatic social media/referrer parser
@@ -254,7 +244,6 @@ async function logClickAnalytics(clickId, ipAddress) {
         const sql = `UPDATE link_clicks 
                      SET country = $1, country_code = $2, city = $3, isp = $4
                      WHERE id = $5`;
-        
         await pool.query(sql, [
             locationData.country,
             locationData.country_code,
@@ -273,7 +262,6 @@ async function logClickAnalytics(clickId, ipAddress) {
 
 // GET /diamonds/:stockId - Public page (NOW WITH HYBRID CERTIFICATE LOGIC)
 app.get('/diamonds/:stockId', async (req, res) => {
-    // --- CASE-INSENSITIVE FIX ---
     const stock_id_from_url = (req.params.stockId || '').toUpperCase();
     
     try {
@@ -305,7 +293,7 @@ app.get('/diamonds/:stockId', async (req, res) => {
                         utm_source, utm_medium, utm_campaign
                      ) 
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                     RETURNING id`; // Get the ID of the new row
+                     RETURNING id`;
         
         const analyticsResult = await pool.query(sql, [
             row.stock_id, ipAddress,
@@ -315,7 +303,7 @@ app.get('/diamonds/:stockId', async (req, res) => {
         ]);
         
         const clickId = analyticsResult.rows[0].id;
-        logClickAnalytics(clickId, ipAddress); // Run this in the background
+        logClickAnalytics(clickId, ipAddress);
         // --- END: Analytics Tracking ---
 
         const baseUrl = req.protocol + '://' + req.get('host');
@@ -327,22 +315,19 @@ app.get('/diamonds/:stockId', async (req, res) => {
         let certificate_url_to_show = null;
 
         if (row.certificate_pdf_url) { // Use new "pdf_url" column
-            // 1. PDF is uploaded! This is the "perfect" experience.
             cert_type = 'pdf';
             certificate_url_to_show = row.certificate_pdf_url; // This is a full Cloudinary URL
         } else if (row.lab && row.certificate_number) {
-            // 2. No PDF. Fallback to building the link automatically.
             cert_type = 'link';
             certificate_url_to_show = buildCertificateUrl(row.lab, row.certificate_number);
         }
-        // 3. If neither, both remain null/none.
         // --- END NEW ---
 
         res.render('diamond', {
             stock_id: row.stock_id,
             video_html: video_html,
-            cert_type: cert_type, // Pass the type ('pdf', 'link', 'none')
-            certificate_url: certificate_url_to_show, // Pass the correct URL
+            cert_type: cert_type, 
+            certificate_url: certificate_url_to_show,
             video_url: row.video_url,
             publicUrl: publicUrl
         });
@@ -377,7 +362,7 @@ app.post('/login', async (req, res) => {
         if (match) {
             req.session.user = { id: user.id, username: user.username };
             logAction(req.session.user, 'LOGIN', 'User logged in.');
-            res.redirect('/admin?login=true'); // Redirect with login=true flag
+            res.redirect('/admin?login=true');
         } else {
             return res.render('login', { message: { type: 'error', text: 'Invalid username or password.' } });
         }
@@ -402,7 +387,6 @@ app.get('/logout', (req, res) => {
 // --- ================================== ---
 // --- ADMIN ROUTES (All require login) ---
 // --- ================================== ---
-// All routes from here use the 'isAuthenticated' middleware first
 
 // GET /admin - Dashboard
 app.get('/admin', isAuthenticated, (req, res) => {
@@ -529,7 +513,6 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, excelUpload.single('diam
         let stonesAdded = 0;
         let stonesIgnored = 0;
 
-        // Use a client for transaction
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -538,12 +521,10 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, excelUpload.single('diam
                          ON CONFLICT (stock_id) DO NOTHING`;
 
             for (const row of jsonData) {
-                // --- THIS IS THE FIX ---
                 const stockIdKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'stock_id');
                 const videoUrlKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'video_url');
                 const labKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'lab');
                 const certNumKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'certificate_number');
-                // --- END FIX ---
                 
                 const stock_id = String(row[stockIdKey] || '').trim().toUpperCase();
                 const video_url = row[videoUrlKey] || null;
@@ -597,12 +578,11 @@ app.post('/admin/upload-pdf', isAuthenticated, canAdd, pdfUpload.array('pdfFiles
         return new Promise((resolve, reject) => {
             const certNumber = path.basename(file.originalname, '.pdf');
             
-            // Upload the file buffer to Cloudinary
             const uploadStream = cloudinary.uploader.upload_stream(
                 {
-                    resource_type: 'raw', // Treat as a raw file, not an image
-                    public_id: certNumber, // Use cert number as the file name
-                    folder: 'certificates' // Put in a 'certificates' folder
+                    resource_type: 'raw', 
+                    public_id: certNumber, 
+                    folder: 'certificates'
                 },
                 async (error, result) => {
                     if (error) {
@@ -611,7 +591,6 @@ app.post('/admin/upload-pdf', isAuthenticated, canAdd, pdfUpload.array('pdfFiles
                         return reject(error);
                     }
 
-                    // Upload success! Now update the database
                     const pdfUrl = result.secure_url;
                     try {
                         const dbResult = await pool.query(
@@ -622,14 +601,12 @@ app.post('/admin/upload-pdf', isAuthenticated, canAdd, pdfUpload.array('pdfFiles
                             filesMatched++;
                         } else {
                             filesUnmatched++;
-                            // If no match, delete the file we just uploaded
                             await cloudinary.uploader.destroy(`certificates/${certNumber}`, { resource_type: 'raw' });
                         }
                         resolve();
                     } catch (dbError) {
                         console.error("DB update error after PDF upload:", dbError);
                         filesUnmatched++;
-                        // Try to delete the orphaned file
                         await cloudinary.uploader.destroy(`certificates/${certNumber}`, { resource_type: 'raw' });
                         reject(dbError);
                     }
@@ -639,7 +616,6 @@ app.post('/admin/upload-pdf', isAuthenticated, canAdd, pdfUpload.array('pdfFiles
         });
     });
 
-    // Wait for all uploads and DB updates to finish
     try {
         await Promise.all(uploadPromises);
         logAction(req.user, 'UPLOAD_PDF', `Matched ${filesMatched} PDFs, Unmatched ${filesUnmatched}.`);
@@ -719,7 +695,6 @@ app.post('/admin/update-stone', isAuthenticated, canAdd, async (req, res) => {
 
     let stone;
     try {
-        // Get the current stone data in case we need to re-render
         const stoneResult = await pool.query("SELECT * FROM stones WHERE id = $1", [id]);
         stone = stoneResult.rows[0];
 
@@ -743,8 +718,7 @@ app.post('/admin/update-stone', isAuthenticated, canAdd, async (req, res) => {
         res.redirect('/admin/manage');
 
     } catch (err) {
-        // Check for UNIQUE constraint error (code '23505' in Postgres)
-        if (err.code === '23505') {
+        if (err.code === '23505') { // Postgres unique violation
             return res.render('admin/edit_stone', { 
                 stone: stone, 
                 message: { type: 'error', text: `Error: Stock ID '${stock_id}' already exists.` }
@@ -760,30 +734,28 @@ app.post('/admin/delete-pdf', isAuthenticated, canAdd, async (req, res) => {
     const { id } = req.body;
     
     try {
-        // 1. Find the stone to get its PDF URL
         const result = await pool.query("SELECT * FROM stones WHERE id = $1", [id]);
         const stone = result.rows[0];
 
         if (stone && stone.certificate_pdf_url) {
-            // 2. Delete the PDF from Cloudinary
+            // Delete from Cloudinary
             const urlParts = stone.certificate_pdf_url.split('/');
             const public_id_with_ext = urlParts.slice(urlParts.indexOf('certificates')).join('/');
             const public_id = `certificates/${path.parse(public_id_with_ext).name}`;
             
             await cloudinary.uploader.destroy(public_id, { resource_type: 'raw' });
             
-            // 3. Set the PDF path to NULL in the database
+            // Set path to NULL in database
             await pool.query("UPDATE stones SET certificate_pdf_url = NULL WHERE id = $1", [id]);
             logAction(req.user, 'DELETE_PDF', `Deleted PDF for stone: ${stone.stock_id}`);
             
-            // 4. Redirect back to the edit page with a success message
+            // Redirect back to the edit page with a success message
             const updatedStone = (await pool.query("SELECT * FROM stones WHERE id = $1", [id])).rows[0];
             return res.render('admin/edit_stone', { 
                 stone: updatedStone, 
                 message: { type: 'success', text: 'PDF successfully deleted.' }
             });
         } else {
-            // No PDF to delete, just go back
             res.redirect(`/admin/edit-stone/${id}`);
         }
     } catch (err) {
@@ -799,11 +771,10 @@ app.post('/admin/delete-stone', isAuthenticated, canDelete, async (req, res) => 
     const { id, stock_id } = req.body;
 
     try {
-        // 1. Find the stone to get its PDF path
         const result = await pool.query("SELECT certificate_pdf_url FROM stones WHERE id = $1", [id]);
         
         if (result.rows.length > 0 && result.rows[0].certificate_pdf_url) {
-            // 2. Delete the PDF from Cloudinary
+            // Delete from Cloudinary
             const url = result.rows[0].certificate_pdf_url;
             const urlParts = url.split('/');
             const public_id_with_ext = urlParts.slice(urlParts.indexOf('certificates')).join('/');
@@ -812,7 +783,6 @@ app.post('/admin/delete-stone', isAuthenticated, canDelete, async (req, res) => 
             await cloudinary.uploader.destroy(public_id, { resource_type: 'raw' });
         }
         
-        // 3. Delete the stone from database
         await pool.query("DELETE FROM stones WHERE id = $1", [id]);
         logAction(req.user, 'DELETE_STONE', `Deleted stone: ${stock_id} (ID: ${id})`);
         res.redirect('/admin/manage');
@@ -826,22 +796,19 @@ app.post('/admin/delete-stone', isAuthenticated, canDelete, async (req, res) => 
 // POST /admin/delete-all-stones (UPDATED to delete all PDFs from Cloudinary)
 app.post('/admin/delete-all-stones', isAuthenticated, isSuperAdmin, async (req, res) => {
     try {
-        // 1. Get all PDF public_ids from the database
         const result = await pool.query("SELECT certificate_pdf_url FROM stones WHERE certificate_pdf_url IS NOT NULL");
         
         if (result.rows.length > 0) {
-            // 2. Extract Cloudinary public_ids
             const public_ids = result.rows.map(row => {
                 const urlParts = row.certificate_pdf_url.split('/');
                 const public_id_with_ext = urlParts.slice(urlParts.indexOf('certificates')).join('/');
                 return `certificates/${path.parse(public_id_with_ext).name}`;
             });
-
-            // 3. Delete all files from Cloudinary in one batch
+            
+            // Delete all files from Cloudinary in one batch
             await cloudinary.api.delete_resources(public_ids, { resource_type: 'raw' });
         }
 
-        // 4. Delete all rows from 'stones' table
         await pool.query("DELETE FROM stones");
         
         logAction(req.user, 'DELETE_ALL_STONES', 'User successfully deleted all stones and associated PDFs.');
@@ -963,7 +930,6 @@ app.post('/admin/update-user', isAuthenticated, isSuperAdmin, async (req, res) =
             id
         ];
         
-        // Add password to the end of the params list *if it exists*
         if (new_password) {
             params.splice(4, 0, ...passwordParams); // Insert password hash before id
         }
