@@ -11,12 +11,14 @@ const pgSession = require('connect-pg-simple')(session); // Postgres session sto
 const QRCode = require('qrcode');
 const fetch = require('node-fetch'); // For API calls
 const UAParser = require('ua-parser-js'); // For Browser/OS detection
+const cloudinary = require('cloudinary').v2; // <-- THIS IS THE FIX
 
 // --- Database Setup ---
 const { pool, initDb } = require('./database.js'); // Import Postgres pool
 // --- DO NOT CALL initDb() here ---
 
 // --- Cloudinary Setup ---
+// These are read from your Render Environment Variables
 cloudinary.config({ 
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME, 
   api_key: process.env.CLOUDINARY_API_KEY, 
@@ -37,12 +39,18 @@ app.set('views', path.join(__dirname, 'views'));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public')); // For future static files
 
-// --- Create 'uploads' folder (This is now for temp files only) ---
-const localUploadDir = path.join(__dirname, 'temp_uploads');
-if (!fs.existsSync(localUploadDir)){
-    fs.mkdirSync(localUploadDir, { recursive: true });
+// --- NEW: Define a persistent data directory ---
+const dataDir = process.env.DATA_DIR || '/var/data'; // Use Render's /var/data
+const uploadDir = path.join(dataDir, 'uploads'); // Save PDFs in /var/data/uploads
+if (!fs.existsSync(uploadDir)){
+    try {
+        fs.mkdirSync(uploadDir, { recursive: true });
+        console.log(`Created persistent upload directory at: ${uploadDir}`);
+    } catch (e) {
+        console.error("CRITICAL ERROR: Could not create upload directory.", e);
+    }
 }
-// We don't make this public, Cloudinary will host
+app.use('/uploads', express.static(uploadDir));
 // --- END NEW ---
 
 // --- Session Middleware (NOW FOR POSTGRES) ---
@@ -82,6 +90,7 @@ async function isAuthenticated(req, res, next) {
         res.locals.user = result.rows[0]; // Makes 'user' variable available in ALL EJS templates
         next();
     } catch (err) {
+        console.error("isAuthenticated error:", err.stack);
         return res.redirect('/login');
     }
 }
@@ -213,7 +222,7 @@ async function logClickAnalytics(clickId, ipAddress) {
     let locationData = {};
     const testIPs = ['::1', '127.0.0.1', '::ffff:127.0.0.1'];
 
-    if (testIPs.includes(ipAddress)) {
+    if (!ipAddress || testIPs.includes(ipAddress)) {
         console.log(`Detected test IP (${ipAddress}). Simulating location.`);
         locationData = {
             country: 'United States',
@@ -529,10 +538,12 @@ app.post('/admin/upload-bulk', isAuthenticated, canAdd, excelUpload.single('diam
                          ON CONFLICT (stock_id) DO NOTHING`;
 
             for (const row of jsonData) {
+                // --- THIS IS THE FIX ---
                 const stockIdKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'stock_id');
                 const videoUrlKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'video_url');
                 const labKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'lab');
                 const certNumKey = Object.keys(row).find(k => k.trim().toLowerCase() === 'certificate_number');
+                // --- END FIX ---
                 
                 const stock_id = String(row[stockIdKey] || '').trim().toUpperCase();
                 const video_url = row[videoUrlKey] || null;
@@ -1138,9 +1149,8 @@ app.get('/', (req, res) => {
 });
 
 // --- Start Server ---
-// --- THIS IS THE FIX ---
+// --- THIS IS THE FIX for ECONNREFUSED ---
 // We start the server *first*, then initialize the database.
-// This prevents the app from crashing if Neon is "asleep".
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
     console.log(`Admin Login: /login`);
