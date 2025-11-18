@@ -1,45 +1,25 @@
-// Import the sqlite3 library
-const { Pool } = require('pg'); // Use the 'pg' library for
+const { Pool } = require('pg');
 const dotenv = require('dotenv');
-const path = require('path');
-const fs = require('fs');
 const bcrypt = require('bcrypt');
 
-// Load Environment Variables
 dotenv.config();
 
-// --- THIS IS THE EACCES (Permission) FIX ---
-// We will create a local './data' folder which Render allows.
-const dataDir = path.join(__dirname, 'data');
-if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-}
-// This path is for the session database
-const dbPath = path.join(dataDir, 'sessions.db');
-console.log(`Session database path set to: ${dbPath}`);
-module.exports.dataDir = dataDir; // Export this path for index.js
-// --- END FIX ---
-
-// --- THIS IS THE ECONNREFUSED (Connection) FIX ---
+// --- FIX: Force SSL for Neon Database ---
 let connectionString = process.env.DATABASE_URL;
 if (connectionString && !connectionString.includes('sslmode=require')) {
     connectionString += '?sslmode=require';
-    console.log("Adding ?sslmode=require to DATABASE_URL.");
 }
-// --- END FIX ---
 
-// Create Database Connection Pool
 const pool = new Pool({
-    connectionString: connectionString, // Use the fixed connection string
+    connectionString: connectionString,
     ssl: {
         rejectUnauthorized: false // Required for Neon
     }
 });
 
-// --- Initialize Database ---
 async function initDb() {
     try {
-        // Create the users table (with PostgreSQL syntax)
+        // Users Table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -52,7 +32,7 @@ async function initDb() {
             );
         `);
 
-        // Create the stones table (with PostgreSQL syntax)
+        // Stones Table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS stones (
                 id SERIAL PRIMARY KEY,
@@ -64,7 +44,7 @@ async function initDb() {
             );
         `);
 
-        // Create History Log Table
+        // History Table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS history_logs (
                 id SERIAL PRIMARY KEY,
@@ -76,7 +56,7 @@ async function initDb() {
             );
         `);
 
-        // Create Link Click/Analytics Table
+        // Analytics Table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS link_clicks (
                 id SERIAL PRIMARY KEY,
@@ -98,33 +78,35 @@ async function initDb() {
             );
         `);
 
-        console.log("All tables created or already exist.");
+        // Session Table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS "session" (
+              "sid" varchar NOT NULL COLLATE "default",
+              "sess" json NOT NULL,
+              "expire" timestamp(6) NOT NULL
+            )
+            WITH (OIDS=FALSE);
+        `);
+        
+        // Add constraint if it doesn't exist (simplified for safety)
+        try {
+            await pool.query(`ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE;`);
+        } catch (e) { /* Ignore if exists */ }
 
-        // --- Create Default Admin User (on startup) ---
-        const adminUsername = 'admin';
-        const adminPassword = 'admin123';
-        
-        const checkUser = await pool.query("SELECT * FROM users WHERE username = $1", [adminUsername]);
-        
-        if (checkUser.rows.length === 0) {
-            console.log("No admin user found. Creating one...");
-            const saltRounds = 10;
-            const hash = await bcrypt.hash(adminPassword, saltRounds);
-            const sql = `INSERT INTO users (username, password_hash, is_superadmin, can_add, can_delete, can_view_analytics)
-                         VALUES ($1, $2, true, true, true, true)`;
-            await pool.query(sql, [adminUsername, hash]);
-            console.log("Default admin user created successfully.");
-        } else {
-            console.log("Admin user already exists.");
+        console.log("Database initialized.");
+
+        // Create Admin User
+        const adminRes = await pool.query("SELECT * FROM users WHERE username = 'admin'");
+        if (adminRes.rows.length === 0) {
+            const hash = await bcrypt.hash('admin123', 10);
+            await pool.query(`INSERT INTO users (username, password_hash, is_superadmin, can_add, can_delete, can_view_analytics)
+                              VALUES ('admin', $1, true, true, true, true)`, [hash]);
+            console.log("Default admin created.");
         }
 
     } catch (err) {
-        console.error("Error initializing database:", err.stack);
-        // This will now show the real connection error in your logs
-        process.exit(1); // Exit if DB init fails
+        console.error("DB Init Error:", err);
     }
 }
 
-// Export the pool (for index.js to use) and the init function
-module.exports.pool = pool;
-module.exports.initDb = initDb;
+module.exports = { pool, initDb };
