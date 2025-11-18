@@ -1,4 +1,4 @@
- // --- Import Libraries ---
+// --- Import Libraries ---
 const express = require('express');
 const path = require('path');
 const fs = require('fs'); // For File System operations
@@ -19,7 +19,7 @@ initDb(); // <-- Call it here to set up tables
 const app = express();
 const port = 3000;
 const saltRounds = 10;
-app.set('trust proxy', 1); // CRITICAL for getting real IP on Replit
+app.set('trust proxy', 1); // CRITICAL for getting real IP on Replit/Render
 
 // --- EJS Template Engine ---
 app.set('view engine', 'ejs');
@@ -27,13 +27,15 @@ app.set('views', path.join(__dirname, 'views'));
 
 // --- Middleware ---
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public')); // For future static files
+app.use(express.static('public')); // For static files like CSS (if you add any)
 
-// --- Create 'uploads' folder and make it public ---
-const uploadDir = path.join(__dirname, 'public/uploads');
+// --- NEW: Define a persistent data directory ---
+const dataDir = '/var/data';
+const uploadDir = path.join(dataDir, 'uploads'); // Save PDFs in /var/data/uploads
 if (!fs.existsSync(uploadDir)){
     fs.mkdirSync(uploadDir, { recursive: true });
 }
+// This makes /uploads/123.pdf available to the public
 app.use('/uploads', express.static(uploadDir));
 // --- END NEW ---
 
@@ -41,8 +43,8 @@ app.use('/uploads', express.static(uploadDir));
 app.use(
     session({
         store: new SQLiteStore({
-            db: 'sessions.db',
-            dir: '.',
+            db: 'sessions.db', // The session database file
+            dir: dataDir, // <-- NEW: Save sessions in /var/data
             concurrentDB: true
         }),
         secret: 'your_secret_key_12345', // Change this!
