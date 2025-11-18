@@ -4,6 +4,15 @@ const bcrypt = require('bcrypt');
 
 dotenv.config();
 
+// --- DEBUGGING: Check if DATABASE_URL is loaded ---
+if (!process.env.DATABASE_URL) {
+    console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    console.error("CRITICAL ERROR: DATABASE_URL is missing!");
+    console.error("Please go to Render Dashboard -> Environment and add DATABASE_URL.");
+    console.error("The app will crash because it has no database to connect to.");
+    console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+}
+
 // --- FIX: Force SSL for Neon Database ---
 let connectionString = process.env.DATABASE_URL;
 if (connectionString && !connectionString.includes('sslmode=require')) {
@@ -88,12 +97,11 @@ async function initDb() {
             WITH (OIDS=FALSE);
         `);
         
-        // Add constraint if it doesn't exist (simplified for safety)
         try {
             await pool.query(`ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE;`);
         } catch (e) { /* Ignore if exists */ }
 
-        console.log("Database initialized.");
+        console.log("Database initialized successfully.");
 
         // Create Admin User
         const adminRes = await pool.query("SELECT * FROM users WHERE username = 'admin'");
