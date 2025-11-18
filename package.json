@@ -1,7 +1,7 @@
 {
-  "name": "diamond-pro-cms",
+  "name": "diamond-cms",
   "version": "1.0.0",
-  "description": "A professional diamond portfolio CMS with Postgres and Cloudinary",
+  "description": "Diamond CMS for Render",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
