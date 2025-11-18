@@ -1,12 +1,24 @@
 // Import the sqlite3 library
 const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+const fs = require('fs');
 
-// Connect to or create a database file named 'diamonds.db'
-const db = new sqlite3.Database('./diamonds.db', (err) => {
+// --- NEW: Define a persistent data directory ---
+const dataDir = '/var/data';
+// Ensure this directory exists
+if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+}
+const dbPath = path.join(dataDir, 'diamonds.db');
+console.log(`Database path set to: ${dbPath}`);
+// --- END NEW ---
+
+// Connect to or create a database file named 'diamonds.db' IN THE DATA DIR
+const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error(err.message);
     }
-    console.log('Connected to the diamonds.db database.');
+    console.log('Connected to the persistent diamonds.db database.');
 });
 
 // --- Initialize Database ---
@@ -37,7 +49,6 @@ function initDb() {
         });
 
         // --- UPDATED: Stones table (FINAL) ---
-        // This is the "Hybrid" model: it has lab/number AND the optional PDF path
         db.run(`
             CREATE TABLE IF NOT EXISTS stones (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +63,6 @@ function initDb() {
                 console.error("Error creating stones table:", err.message);
             }
         });
-        // --- END UPDATED ---
 
         // --- History Log Table ---
         db.run(`
@@ -71,31 +81,21 @@ function initDb() {
         });
 
         // --- Analytics Table (FINAL) ---
-        // This has all the new columns for powerful, automatic analytics
         db.run(`
             CREATE TABLE IF NOT EXISTS link_clicks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 stock_id TEXT NOT NULL,
                 ip_address TEXT,
-                
-                -- Automatic Source Detection --
-                social_source TEXT,  -- e.g., "Facebook", "Google", "Direct"
-                referrer_domain TEXT, -- e.g., "facebook.com", "google.com"
-
+                social_source TEXT,
+                referrer_domain TEXT,
                 user_agent TEXT(1024),
-                
-                -- Location Data --
                 country TEXT,
                 country_code TEXT,
                 city TEXT,
                 isp TEXT,
-
-                -- Device Data (from ua-parser-js) --
                 browser TEXT,
                 os TEXT,
-
-                -- Marketing Data (for WhatsApp, QR, etc.) --
                 utm_source TEXT,
                 utm_medium TEXT,
                 utm_campaign TEXT
@@ -105,7 +105,6 @@ function initDb() {
                 console.error("Error creating link_clicks table:", err.message);
             }
         });
-        // --- END UPDATED ---
     });
 }
 
